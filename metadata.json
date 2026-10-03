@@ -1,0 +1,6 @@
+{
+  "name": "AutoFill AI - Smart Form Filling Extension",
+  "description": "Chrome extension (Manifest V3) that intelligently scans and autofills web forms using an AI profile built from your resume PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

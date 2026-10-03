@@ -1,0 +1,335 @@
+/**
+ * AutoFill AI - Content Styles
+ * Field highlighting, floating badge, and review panel.
+ */
+
+/* Highlighting styles applied to page inputs */
+.autofill-highlight-high {
+  outline: 2px solid #10b981 !important;
+  outline-offset: 1px !important;
+  background-color: rgba(16, 185, 129, 0.08) !important;
+  transition: outline 0.2s ease, background-color 0.2s ease;
+}
+
+.autofill-highlight-medium {
+  outline: 2px solid #f59e0b !important;
+  outline-offset: 1px !important;
+  background-color: rgba(245, 158, 11, 0.08) !important;
+  transition: outline 0.2s ease, background-color 0.2s ease;
+}
+
+.autofill-highlight-unfilled {
+  outline: 2px dashed #ef4444 !important;
+  outline-offset: 1px !important;
+  background-color: rgba(239, 68, 68, 0.05) !important;
+  transition: outline 0.2s ease, background-color 0.2s ease;
+}
+
+/* Floating status badge on the webpage */
+#autofill-ai-floating-badge {
+  position: fixed !important;
+  bottom: 24px !important;
+  right: 24px !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 10px 16px !important;
+  background: #111827 !important;
+  color: #f9fafb !important;
+  border-radius: 9999px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3) !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  line-height: 1 !important;
+  animation: autofill-badge-appear 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  user-select: none !important;
+}
+
+@keyframes autofill-badge-appear {
+  from { opacity: 0; transform: translateY(12px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+#autofill-ai-floating-badge .autofill-badge-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+#autofill-ai-floating-badge .autofill-badge-text {
+  color: #f3f4f6;
+}
+
+#autofill-ai-floating-badge .autofill-badge-count {
+  color: #10b981;
+  font-weight: 700;
+}
+
+#autofill-ai-floating-badge button {
+  all: unset;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+#autofill-ai-floating-badge button:hover {
+  opacity: 0.9;
+}
+
+#autofill-ai-floating-badge .autofill-btn-review {
+  background: #374151;
+  color: #e5e7eb;
+}
+#autofill-ai-floating-badge .autofill-btn-review:hover {
+  background: #4b5563;
+}
+
+#autofill-ai-floating-badge .autofill-btn-undo {
+  background: #dc2626;
+  color: #ffffff;
+}
+#autofill-ai-floating-badge .autofill-btn-undo:hover {
+  background: #b91c1c;
+}
+
+#autofill-ai-floating-badge .autofill-btn-refill {
+  background: #2563eb;
+  color: #ffffff;
+}
+#autofill-ai-floating-badge .autofill-btn-refill:hover {
+  background: #1d4ed8;
+}
+
+#autofill-ai-floating-badge .autofill-btn-close {
+  padding: 3px 6px;
+  color: #9ca3af;
+  font-size: 14px;
+}
+#autofill-ai-floating-badge .autofill-btn-close:hover {
+  color: #ffffff;
+}
+
+/* Review Modal Overlay */
+#autofill-ai-review-modal-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  background: rgba(0, 0, 0, 0.6) !important;
+  backdrop-filter: blur(3px) !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+  animation: autofill-fade-in 0.2s ease !important;
+}
+
+@keyframes autofill-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+#autofill-ai-review-modal {
+  width: 90% !important;
+  max-width: 680px !important;
+  max-height: 85vh !important;
+  background: #1e293b !important;
+  color: #f1f5f9 !important;
+  border-radius: 14px !important;
+  border: 1px solid #334155 !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+
+.autofill-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: #0f172a;
+  border-bottom: 1px solid #334155;
+}
+
+.autofill-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.autofill-modal-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.autofill-field-row {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.autofill-field-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.autofill-field-label {
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.autofill-field-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  font-weight: 600;
+}
+
+.autofill-badge-high {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.autofill-badge-med {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.autofill-badge-none {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.autofill-badge-failed {
+  background: rgba(239, 68, 68, 0.25) !important;
+  color: #fca5a5 !important;
+  border: 1px solid rgba(239, 68, 68, 0.6) !important;
+  font-weight: 700 !important;
+}
+
+.autofill-field-row.has-failure {
+  border-color: rgba(239, 68, 68, 0.5) !important;
+  background: rgba(239, 68, 68, 0.05) !important;
+}
+
+.autofill-failure-message {
+  font-size: 11px;
+  color: #f87171;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.autofill-field-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: #f8fafc;
+  font-size: 13px;
+}
+.autofill-field-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+.autofill-field-reason {
+  font-size: 11px;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.autofill-modal-footer {
+  padding: 12px 20px;
+  background: #0f172a;
+  border-top: 1px solid #334155;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.autofill-btn-primary {
+  background: #2563eb;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.autofill-btn-primary:hover {
+  background: #1d4ed8;
+}
+
+.autofill-btn-secondary {
+  background: #334155;
+  color: #e2e8f0;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.autofill-btn-secondary:hover {
+  background: #475569;
+}
+
+.autofill-file-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.autofill-btn-attach {
+  all: unset;
+  background: #2563eb !important;
+  color: #ffffff !important;
+  padding: 5px 12px !important;
+  border-radius: 6px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  transition: background 0.15s ease !important;
+}
+
+.autofill-btn-attach:hover {
+  background: #1d4ed8 !important;
+}
+
