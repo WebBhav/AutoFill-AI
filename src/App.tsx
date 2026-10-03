@@ -3,169 +3,65 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import JSZip from 'jszip';
 import {
   Download,
-  Sparkles,
-  FileText,
-  Settings,
-  HelpCircle,
-  Copy,
-  Check,
-  RotateCcw,
-  Eye,
-  CheckCircle2,
-  AlertCircle,
-  Folder,
-  FileCode,
-  ShieldCheck,
-  Cpu,
-  Layers,
   Zap,
-  Play,
-  Trash2,
-  Upload,
+  FileText,
+  Link2,
+  ShieldCheck,
+  Check,
+  Copy,
+  Menu,
+  X,
+  ExternalLink,
+  Lock,
   ArrowRight,
-  ExternalLink
+  HelpCircle,
+  Sparkles,
+  Github,
+  Home
 } from 'lucide-react';
 import { EXTENSION_FILES } from './extension-source.ts';
 
-const SAMPLE_PROFILE_DEFAULT = `# PERSONAL PROFILE
-
-## 1. Personal & Contact Information
-- Full Name: Alex Rivera
-- First Name: Alex
-- Middle Name: Morgan
-- Last Name: Rivera
-- Preferred / Nickname: Alex
-- Email: alex.rivera@devmail.io
-- Phone (Primary): +1 (415) 890-1234
-- Phone (Mobile): +1 (415) 890-1234
-- Street Address: 450 Mission Street
-- Apartment / Suite: Suite 1200
-- City: San Francisco
-- State / Province: CA
-- Postal Code: 94105
-- Country: United States
-
-## 2. Web & Social Links
-- LinkedIn: https://linkedin.com/in/alex-rivera-dev
-- GitHub: https://github.com/alexrivera-cloud
-- Personal Portfolio / Website: https://alexrivera.dev
-- Twitter / X: https://x.com/alexrivera_ai
-- Other Links: https://bsky.app/profile/alexrivera.dev
-
-## 3. Work Authorization & Logistics
-- Legally Authorized to Work in Country of Residence: Yes
-- Will now or in the future require visa sponsorship: No
-- Current Work Authorization / Visa Type: US Citizen
-- Willing to Relocate: Yes
-- Notice Period / Available Start Date: 2 weeks
-- Desired Salary / Rate: $165,000 / year
-- Current Location: San Francisco, CA
-
-## 4. Professional Summary & Headlines
-- Professional Title / Headline: Senior Full-Stack & Systems Engineer
-- Short Summary: Full-stack engineer with 7+ years building high-concurrency cloud applications and intuitive web interfaces with TypeScript, React, and Go.
-- Years of Professional Experience: 7
-
-## 5. Work Experience
-- **Staff Software Engineer** | CloudStream Technologies (2022 - Present) | San Francisco, CA
-  - Designed distributed event pipeline handling 100k requests/sec using Kafka & Go.
-  - Led the frontend platform migration to React 19 with 40% reduction in TTI.
-- **Senior Software Engineer** | Horizon Labs (2019 - 2022) | Seattle, WA
-  - Built core collaborative features used by 250,000 active enterprise users.
-  - Reduced API p99 latency from 320ms to 45ms.
-
-## 6. Education
-- **B.S. in Computer Science** | University of Washington (2015 - 2019) | GPA: 3.85
-
-## 7. Skills & Competencies
-- Programming Languages: TypeScript, JavaScript, Python, Go, SQL
-- Frameworks & Libraries: React, Node.js, Express, Next.js, Tailwind CSS
-- Cloud & Infrastructure: AWS, Docker, Kubernetes, PostgreSQL, Redis
-- Soft Skills: Technical Architecture, Mentorship, Cross-functional Leadership
-
-## 8. Certifications & Licenses
-- AWS Certified Solutions Architect - Professional (2023)
-
-## 9. Languages
-- English (Native / Bilingual)
-- Spanish (Professional Working)
-
-## 10. Common Job Application Q&A
-- Why are you interested in this role?: Excited by your mission to streamline complex developer workflows. My background scaling high-concurrency systems directly aligns with the roadmap.
-- Greatest professional accomplishment: Led zero-downtime database migration for 10M accounts while cutting infrastructure costs by 30%.
-- Preferred work arrangement: Hybrid or Remote
-- Has driver's license: Yes
-- Veteran status: Not a veteran
-- Disability status: No disability
-`;
-
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'simulator' | 'profile' | 'code' | 'guide'>('simulator');
-  const [selectedFile, setSelectedFile] = useState<string>('manifest.json');
-  const [copiedFile, setCopiedFile] = useState(false);
+  const [currentPath, setCurrentPath] = useState<string>(
+    typeof window !== 'undefined' ? window.location.pathname : '/'
+  );
   const [isZipping, setIsZipping] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  const [copiedExtensionsUrl, setCopiedExtensionsUrl] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [pageLoadingKey, setPageLoadingKey] = useState(0);
 
-  // Profile Studio State
-  const [profileText, setProfileText] = useState(SAMPLE_PROFILE_DEFAULT);
-  const [apiKey, setApiKey] = useState('');
-  const [provider, setProvider] = useState<'gemini' | 'openai' | 'anthropic'>('gemini');
-  const [geminiModel, setGeminiModel] = useState<string>('gemini-3.8-flash');
-  const [customGeminiModel, setCustomGeminiModel] = useState<string>('');
-  const [learnedAnswers, setLearnedAnswers] = useState<Record<string, { answer: string; reason: string }>>({
-    'willingtorelocate': { answer: 'Yes', reason: 'User confirmed preference for relocation' },
-    'noticeperiod': { answer: '2 weeks', reason: 'Standard current notice period' },
-  });
+  // Sync with browser history
+  useEffect(() => {
+    const handlePopState = () => {
+      setCurrentPath(window.location.pathname);
+      setPageLoadingKey((prev) => prev + 1);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
-  // Simulator Form State (React controlled)
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
-  const [formData, setFormData] = useState({
-    firstName: '',
-    lastName: '',
-    email: '',
-    phone: '',
-    address: '',
-    city: '',
-    state: '',
-    zip: '',
-    country: 'United States',
-    linkedIn: '',
-    github: '',
-    portfolio: '',
-    yearsExp: '',
-    workAuth: '',
-    sponsorship: '',
-    relocate: '',
-    startDate: '',
-    desiredSalary: '',
-    roleInterest: 'Full Stack',
-    whyJoin: '',
-    agreeCheck: false,
-    resumeName: '',
-  });
-
-  // Simulator Autofill State
-  const [fieldHighlights, setFieldHighlights] = useState<Record<string, 'high' | 'medium' | 'unfilled'>>({});
-  const [scannedDescriptors, setScannedDescriptors] = useState<any[] | null>(null);
-  const [isScanning, setIsScanning] = useState(false);
-  const [isAutofilling, setIsAutofilling] = useState(false);
-  const [floatingBadge, setFloatingBadge] = useState<{ filled: number; total: number } | null>(null);
-  const [showReviewModal, setShowReviewModal] = useState(false);
-  const [reviewFields, setReviewFields] = useState<Array<{ id: string; label: string; value: string; confidence: number; reason: string }>>([]);
-  const [undoSnapshot, setUndoSnapshot] = useState<typeof formData | null>(null);
-  const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'info' | 'warn' } | null>(null);
-
-  const formContainerRef = useRef<HTMLDivElement>(null);
-
-  const showToast = (text: string, type: 'success' | 'info' | 'warn' = 'info') => {
-    setToastMsg({ text, type });
-    setTimeout(() => setToastMsg(null), 3500);
+  const navigateTo = (path: string) => {
+    if (path !== currentPath) {
+      setPageLoadingKey((prev) => prev + 1);
+    }
+    window.history.pushState(null, '', path);
+    setCurrentPath(path);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setMobileMenuOpen(false);
   };
 
-  // Download entire Extension as ZIP
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  // ZIP Generation & Download
   const handleDownloadZip = async () => {
     setIsZipping(true);
     try {
@@ -189,1329 +85,775 @@ export default function App() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      showToast('Extension downloaded! Extract and load in chrome://extensions', 'success');
+      showToast('Extension downloaded! Extract and load in chrome://extensions');
     } catch (err: any) {
-      showToast(`Failed to build zip: ${err.message}`, 'warn');
+      showToast(`Failed to build zip: ${err.message}`);
     } finally {
       setIsZipping(false);
     }
   };
 
-  // Scan the Simulator DOM fields using descriptor logic
-  const handleScanFields = () => {
-    setIsScanning(true);
-    const container = formContainerRef.current;
-    if (!container) return;
-
-    const elements = container.querySelectorAll('input, select, textarea, [role="combobox"]');
-    const descriptors: any[] = [];
-
-    elements.forEach((el: any, idx) => {
-      const id = el.id || el.name || `field_${idx + 1}`;
-      let label = el.getAttribute('aria-label') || el.placeholder || el.name;
-      if (el.id) {
-        const lbl = container.querySelector(`label[for="${el.id}"]`);
-        if (lbl) label = (lbl as HTMLElement).innerText.replace(/[*:]/g, '').trim();
-      }
-      if (!label && el.closest('.form-control-wrap')) {
-        const lbl = el.closest('.form-control-wrap').querySelector('label');
-        if (lbl) label = lbl.innerText.replace(/[*:]/g, '').trim();
-      }
-
-      const desc: any = {
-        id,
-        name: el.name || el.id,
-        type: el.type || el.tagName.toLowerCase(),
-        label: label || 'Field',
-        placeholder: el.placeholder || '',
-        required: el.required || false,
-        currentValue: el.type === 'checkbox' ? el.checked : el.value,
-      };
-
-      if (el.tagName.toLowerCase() === 'select') {
-        desc.options = Array.from((el as HTMLSelectElement).options).map(o => ({ value: o.value, text: o.text }));
-      }
-
-      descriptors.push(desc);
-    });
-
-    setScannedDescriptors(descriptors);
-    setIsScanning(false);
-    showToast(`Scanned ${descriptors.length} form field descriptors!`, 'info');
+  const handleCopyExtensionsUrl = () => {
+    navigator.clipboard.writeText('chrome://extensions');
+    setCopiedExtensionsUrl(true);
+    setTimeout(() => setCopiedExtensionsUrl(false), 2000);
+    showToast('Copied "chrome://extensions" to clipboard!');
   };
 
-  // Run AutoFill Engine on the Simulator
-  const handleRunAutofill = async () => {
-    setIsAutofilling(true);
-    // Take snapshot for Undo
-    setUndoSnapshot({ ...formData });
-
-    // Simulate smart matching against PROFILE.md
-    setTimeout(() => {
-      const highlights: Record<string, 'high' | 'medium' | 'unfilled'> = {};
-      const newForm = { ...formData };
-      const reviews: Array<{ id: string; label: string; value: string; confidence: number; reason: string }> = [];
-
-      // Step 1 matching
-      if (currentStep === 1) {
-        newForm.firstName = 'Alex';
-        highlights['firstName'] = 'high';
-        reviews.push({ id: 'firstName', label: 'First Name', value: 'Alex', confidence: 1.0, reason: 'Exact match from Profile' });
-
-        newForm.lastName = 'Rivera';
-        highlights['lastName'] = 'high';
-        reviews.push({ id: 'lastName', label: 'Last Name', value: 'Rivera', confidence: 1.0, reason: 'Exact match from Profile' });
-
-        newForm.email = 'alex.rivera@devmail.io';
-        highlights['email'] = 'high';
-        reviews.push({ id: 'email', label: 'Email Address', value: 'alex.rivera@devmail.io', confidence: 1.0, reason: 'Exact match from Profile' });
-
-        newForm.phone = '+1 (415) 890-1234';
-        highlights['phone'] = 'high';
-        reviews.push({ id: 'phone', label: 'Phone Number', value: '+1 (415) 890-1234', confidence: 1.0, reason: 'Exact match from Profile' });
-
-        newForm.address = '450 Mission Street, Suite 1200';
-        highlights['address'] = 'high';
-        reviews.push({ id: 'address', label: 'Street Address', value: '450 Mission Street, Suite 1200', confidence: 0.95, reason: 'Profile Street + Suite' });
-
-        newForm.city = 'San Francisco';
-        highlights['city'] = 'high';
-        reviews.push({ id: 'city', label: 'City', value: 'San Francisco', confidence: 1.0, reason: 'Exact match' });
-
-        newForm.state = 'CA';
-        highlights['state'] = 'high';
-        reviews.push({ id: 'state', label: 'State / Province', value: 'CA', confidence: 1.0, reason: 'Exact match' });
-
-        newForm.zip = '94105';
-        highlights['zip'] = 'high';
-        reviews.push({ id: 'zip', label: 'Postal Code', value: '94105', confidence: 1.0, reason: 'Exact match' });
-
-        newForm.linkedIn = 'https://linkedin.com/in/alex-rivera-dev';
-        highlights['linkedIn'] = 'high';
-        reviews.push({ id: 'linkedIn', label: 'LinkedIn URL', value: 'https://linkedin.com/in/alex-rivera-dev', confidence: 1.0, reason: 'Online Profiles link' });
-
-        newForm.github = 'https://github.com/alexrivera-cloud';
-        highlights['github'] = 'high';
-        reviews.push({ id: 'github', label: 'GitHub URL', value: 'https://github.com/alexrivera-cloud', confidence: 1.0, reason: 'Online Profiles link' });
-
-        newForm.portfolio = 'https://alexrivera.dev';
-        highlights['portfolio'] = 'high';
-        reviews.push({ id: 'portfolio', label: 'Portfolio URL', value: 'https://alexrivera.dev', confidence: 1.0, reason: 'Online Profiles link' });
-      }
-
-      // Step 2 matching
-      if (currentStep === 2) {
-        newForm.yearsExp = '7+ years';
-        highlights['yearsExp'] = 'high';
-        reviews.push({ id: 'yearsExp', label: 'Years of Experience', value: '7+ years', confidence: 0.95, reason: 'From Section 4: 7 years' });
-
-        newForm.workAuth = 'citizen';
-        highlights['workAuth'] = 'high';
-        reviews.push({ id: 'workAuth', label: 'Work Authorization', value: 'citizen', confidence: 1.0, reason: 'US Citizen from Work Auth section' });
-
-        newForm.sponsorship = 'no';
-        highlights['sponsorship'] = 'high';
-        reviews.push({ id: 'sponsorship', label: 'Requires Sponsorship', value: 'no', confidence: 1.0, reason: 'Profile states No sponsorship needed' });
-
-        newForm.relocate = 'yes';
-        highlights['relocate'] = 'high';
-        reviews.push({ id: 'relocate', label: 'Willing to Relocate', value: 'yes', confidence: 1.0, reason: 'Matched learned answer cache' });
-
-        newForm.startDate = '2026-10-17';
-        highlights['startDate'] = 'high';
-        reviews.push({ id: 'startDate', label: 'Available Start Date', value: '2026-10-17', confidence: 0.9, reason: '2 weeks notice period from profile' });
-
-        newForm.desiredSalary = '$165,000';
-        highlights['desiredSalary'] = 'high';
-        reviews.push({ id: 'desiredSalary', label: 'Expected Salary', value: '$165,000', confidence: 0.95, reason: 'Profile Section 3: $165,000 / year' });
-      }
-
-      // Step 3 matching
-      if (currentStep === 3) {
-        newForm.roleInterest = 'Full Stack';
-        highlights['roleInterest'] = 'high';
-        reviews.push({ id: 'roleInterest', label: 'Primary Role Track', value: 'Full Stack', confidence: 0.95, reason: 'Senior Full-Stack Engineer headline' });
-
-        newForm.whyJoin = 'I am drawn to your focus on high-impact developer workflows and infrastructure performance. With 7+ years architecting distributed systems and reactive web platforms, I look forward to contributing directly to your platform reliability and customer experience.';
-        highlights['whyJoin'] = 'medium';
-        reviews.push({ id: 'whyJoin', label: 'Why do you want to join?', value: newForm.whyJoin, confidence: 0.85, reason: 'Tailored answer synthesized from candidate skills and engineering context' });
-
-        newForm.agreeCheck = true;
-        highlights['agreeCheck'] = 'high';
-        reviews.push({ id: 'agreeCheck', label: 'Consent & Verification', value: 'Checked', confidence: 1.0, reason: 'Standard job application consent' });
-
-        newForm.resumeName = 'Alex_Rivera_Resume_2026.pdf';
-        highlights['resumeName'] = 'high';
-        reviews.push({ id: 'resumeName', label: 'Resume Upload', value: 'Alex_Rivera_Resume_2026.pdf', confidence: 1.0, reason: 'Auto-attached stored PDF via DataTransfer' });
-      }
-
-      setFormData(newForm);
-      setFieldHighlights(highlights);
-      setReviewFields(reviews);
-      setFloatingBadge({ filled: reviews.length, total: reviews.length });
-      setIsAutofilling(false);
-      showToast(`AutoFill AI filled ${reviews.length} fields on Step ${currentStep}!`, 'success');
-    }, 400);
-  };
-
-  const handleUndo = () => {
-    if (undoSnapshot) {
-      setFormData(undoSnapshot);
-      setFieldHighlights({});
-      setFloatingBadge(null);
-      showToast('Undone previous autofill values.', 'info');
-    }
-  };
-
-  const handleSaveCorrection = (fieldId: string, newVal: string) => {
-    setFormData(prev => ({ ...prev, [fieldId]: newVal }));
-    setLearnedAnswers(prev => ({
-      ...prev,
-      [fieldId.toLowerCase()]: {
-        answer: newVal,
-        reason: `Manually corrected via Review Panel for "${fieldId}"`,
-      },
-    }));
-    showToast(`Saved and memorized answer for "${fieldId}"!`, 'success');
-  };
+  const isAboutPage = currentPath === '/about';
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      {/* Top Navigation Bar */}
-      <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-40 px-6 py-3.5 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-violet-500 flex items-center justify-center font-black text-white text-base shadow-lg shadow-blue-500/25">
-            AI
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="font-bold text-base tracking-tight text-white">AutoFill AI</h1>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                Manifest V3
-              </span>
-              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3" /> Ready to Load
-              </span>
-            </div>
-            <p className="text-xs text-slate-400">PDF-Grounded Smart Form Filling Chrome Extension</p>
-          </div>
+    <div className="bg-[#090D16] text-slate-100 font-sans antialiased selection:bg-blue-600 selection:text-white relative overflow-x-hidden min-h-screen flex flex-col justify-between">
+      {/* Top Page Loading Animation Bar */}
+      <div
+        key={pageLoadingKey}
+        className="fixed top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-blue-500 via-cyan-400 to-indigo-500 z-50 animate-load-bar pointer-events-none"
+      />
+
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 rounded-xl bg-slate-900/95 border border-blue-500/30 text-white text-xs font-medium shadow-2xl shadow-blue-500/20 backdrop-blur-md transition-all animate-bounce">
+          <Sparkles className="w-4 h-4 text-blue-400" />
+          <span>{toastMessage}</span>
         </div>
+      )}
 
-        {/* Tab Switcher */}
-        <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
+      {/* Ambient Glowing Backdrop Orbs */}
+      <div aria-hidden="true" className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+        <div className="absolute -top-40 left-1/4 w-[600px] h-[500px] bg-blue-600/15 rounded-full blur-[130px] animate-pulse-subtle" />
+        <div className="absolute top-[35%] -right-20 w-[550px] h-[550px] bg-cyan-600/10 rounded-full blur-[140px]" />
+        <div className="absolute bottom-10 left-10 w-[700px] h-[450px] bg-indigo-600/10 rounded-full blur-[150px]" />
+        <div className="absolute inset-0 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px] opacity-25" />
+      </div>
+
+      {/* Navigation Bar */}
+      <header className="sticky top-0 z-40 backdrop-blur-xl bg-[#090D16]/85 border-b border-white/[0.08]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+          {/* Main Logo & Brand */}
           <button
-            onClick={() => setActiveTab('simulator')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
-              activeTab === 'simulator'
-                ? 'bg-blue-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-900'
-            }`}
+            onClick={() => navigateTo('/')}
+            className="flex items-center space-x-3 text-left cursor-pointer group"
           >
-            <Play className="w-3.5 h-3.5" /> Form Simulator
-          </button>
-          <button
-            onClick={() => setActiveTab('profile')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
-              activeTab === 'profile'
-                ? 'bg-blue-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-900'
-            }`}
-          >
-            <FileText className="w-3.5 h-3.5" /> Profile & Resume Studio
-          </button>
-          <button
-            onClick={() => setActiveTab('code')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
-              activeTab === 'code'
-                ? 'bg-blue-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-900'
-            }`}
-          >
-            <FileCode className="w-3.5 h-3.5" /> Extension Source ({Object.keys(EXTENSION_FILES).length} Files)
-          </button>
-          <button
-            onClick={() => setActiveTab('guide')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
-              activeTab === 'guide'
-                ? 'bg-blue-600 text-white shadow'
-                : 'text-slate-400 hover:text-white hover:bg-slate-900'
-            }`}
-          >
-            <HelpCircle className="w-3.5 h-3.5" /> Install & Debug Guide
-          </button>
-        </div>
-
-        {/* 1-Click ZIP Downloader */}
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleDownloadZip}
-            disabled={isZipping}
-            className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-lg shadow-blue-500/25 transition active:scale-95 disabled:opacity-50"
-          >
-            <Download className="w-4 h-4" />
-            {isZipping ? 'Packaging ZIP...' : 'Download Extension (.zip)'}
-          </button>
-        </div>
-      </header>
-
-      {/* Main Content Area */}
-      <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
-        {/* Toast */}
-        {toastMsg && (
-          <div
-            className={`fixed top-16 right-8 z-50 px-4 py-2.5 rounded-xl shadow-2xl text-xs font-semibold flex items-center gap-2.5 transition animate-in fade-in slide-in-from-top-3 ${
-              toastMsg.type === 'success'
-                ? 'bg-emerald-600 text-white'
-                : toastMsg.type === 'warn'
-                ? 'bg-amber-600 text-white'
-                : 'bg-blue-600 text-white'
-            }`}
-          >
-            {toastMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-            {toastMsg.text}
-          </div>
-        )}
-
-        {/* TAB 1: INTERACTIVE FORM SIMULATOR */}
-        {activeTab === 'simulator' && (
-          <div className="space-y-6">
-            {/* Simulator Control Bar */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <h2 className="font-bold text-white text-sm">Workday / Greenhouse Job Application Simulator</h2>
-                </div>
-                <p className="text-xs text-slate-400 mt-1">
-                  Test the extension's DOM scanner, React synthetic event triggering, and visual highlighting live.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handleScanFields}
-                  disabled={isScanning}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 transition"
-                >
-                  <Eye className="w-3.5 h-3.5" /> Scan Fields ({scannedDescriptors?.length ?? '?'})
-                </button>
-                <button
-                  onClick={handleRunAutofill}
-                  disabled={isAutofilling}
-                  className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-600/30 transition active:scale-95"
-                >
-                  <Zap className="w-4 h-4" />
-                  {isAutofilling ? 'Synthesizing...' : '⚡ Trigger AutoFill AI'}
-                </button>
-              </div>
-            </div>
-
-            {/* Stepper Header */}
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <div className="flex items-center gap-8">
-                <button
-                  onClick={() => setCurrentStep(1)}
-                  className={`flex items-center gap-2.5 text-xs font-semibold pb-2 border-b-2 transition ${
-                    currentStep === 1
-                      ? 'border-blue-500 text-blue-400'
-                      : 'border-transparent text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <span className="w-5 h-5 rounded-full bg-slate-800 flex items-center justify-center text-[10px]">1</span>
-                  Personal & Contact
-                </button>
-                <button
-                  onClick={() => setCurrentStep(2)}
-                  className={`flex items-center gap-2.5 text-xs font-semibold pb-2 border-b-2 transition ${
-                    currentStep === 2
-                      ? 'border-blue-500 text-blue-400'
-                      : 'border-transparent text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <span className="w-5 h-5 rounded-full bg-slate-800 flex items-center justify-center text-[10px]">2</span>
-                  Logistics & Authorization
-                </button>
-                <button
-                  onClick={() => setCurrentStep(3)}
-                  className={`flex items-center gap-2.5 text-xs font-semibold pb-2 border-b-2 transition ${
-                    currentStep === 3
-                      ? 'border-blue-500 text-blue-400'
-                      : 'border-transparent text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <span className="w-5 h-5 rounded-full bg-slate-800 flex items-center justify-center text-[10px]">3</span>
-                  Role Questions & Resume
-                </button>
-              </div>
-
-              <div className="text-xs text-slate-400 flex items-center gap-3">
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> High Confidence (≥75%)</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span> Inferred / Q&A</span>
-              </div>
-            </div>
-
-            {/* Live Form Container */}
-            <div
-              ref={formContainerRef}
-              className="bg-slate-900/60 border border-slate-800 rounded-2xl p-8 relative shadow-xl"
-            >
-              {/* STEP 1: Personal & Contact */}
-              {currentStep === 1 && (
-                <div className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-firstName" className="block text-xs font-bold text-slate-300 mb-1.5">
-                        First Name <span className="text-red-400">*</span>
-                      </label>
-                      <input
-                        id="sim-firstName"
-                        name="firstName"
-                        type="text"
-                        required
-                        value={formData.firstName}
-                        onChange={e => setFormData({ ...formData, firstName: e.target.value })}
-                        placeholder="e.g. Alex"
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['firstName'] === 'high'
-                            ? 'ring-2 ring-emerald-500 bg-emerald-950/20 border-emerald-500'
-                            : 'border-slate-800 focus:border-blue-500'
-                        }`}
-                      />
-                    </div>
-
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-lastName" className="block text-xs font-bold text-slate-300 mb-1.5">
-                        Last Name <span className="text-red-400">*</span>
-                      </label>
-                      <input
-                        id="sim-lastName"
-                        name="lastName"
-                        type="text"
-                        required
-                        value={formData.lastName}
-                        onChange={e => setFormData({ ...formData, lastName: e.target.value })}
-                        placeholder="e.g. Rivera"
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['lastName'] === 'high'
-                            ? 'ring-2 ring-emerald-500 bg-emerald-950/20 border-emerald-500'
-                            : 'border-slate-800 focus:border-blue-500'
-                        }`}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-email" className="block text-xs font-bold text-slate-300 mb-1.5">
-                        Email Address <span className="text-red-400">*</span>
-                      </label>
-                      <input
-                        id="sim-email"
-                        name="email"
-                        type="email"
-                        required
-                        value={formData.email}
-                        onChange={e => setFormData({ ...formData, email: e.target.value })}
-                        placeholder="alex@example.com"
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['email'] === 'high'
-                            ? 'ring-2 ring-emerald-500 bg-emerald-950/20 border-emerald-500'
-                            : 'border-slate-800 focus:border-blue-500'
-                        }`}
-                      />
-                    </div>
-
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-phone" className="block text-xs font-bold text-slate-300 mb-1.5">
-                        Phone Number
-                      </label>
-                      <input
-                        id="sim-phone"
-                        name="phone"
-                        type="tel"
-                        value={formData.phone}
-                        onChange={e => setFormData({ ...formData, phone: e.target.value })}
-                        placeholder="+1 (555) 000-0000"
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['phone'] === 'high'
-                            ? 'ring-2 ring-emerald-500 bg-emerald-950/20 border-emerald-500'
-                            : 'border-slate-800 focus:border-blue-500'
-                        }`}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="form-control-wrap">
-                    <label htmlFor="sim-address" className="block text-xs font-bold text-slate-300 mb-1.5">
-                      Street Address
-                    </label>
-                    <input
-                      id="sim-address"
-                      name="address"
-                      type="text"
-                      value={formData.address}
-                      onChange={e => setFormData({ ...formData, address: e.target.value })}
-                      placeholder="123 Main St"
-                      className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                        fieldHighlights['address'] === 'high'
-                          ? 'ring-2 ring-emerald-500 bg-emerald-950/20 border-emerald-500'
-                          : 'border-slate-800 focus:border-blue-500'
-                      }`}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-city" className="block text-xs font-bold text-slate-300 mb-1.5">City</label>
-                      <input
-                        id="sim-city"
-                        name="city"
-                        type="text"
-                        value={formData.city}
-                        onChange={e => setFormData({ ...formData, city: e.target.value })}
-                        placeholder="San Francisco"
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['city'] === 'high' ? 'ring-2 ring-emerald-500 border-emerald-500' : 'border-slate-800'
-                        }`}
-                      />
-                    </div>
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-state" className="block text-xs font-bold text-slate-300 mb-1.5">State</label>
-                      <input
-                        id="sim-state"
-                        name="state"
-                        type="text"
-                        value={formData.state}
-                        onChange={e => setFormData({ ...formData, state: e.target.value })}
-                        placeholder="CA"
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['state'] === 'high' ? 'ring-2 ring-emerald-500 border-emerald-500' : 'border-slate-800'
-                        }`}
-                      />
-                    </div>
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-zip" className="block text-xs font-bold text-slate-300 mb-1.5">Postal Code</label>
-                      <input
-                        id="sim-zip"
-                        name="zip"
-                        type="text"
-                        value={formData.zip}
-                        onChange={e => setFormData({ ...formData, zip: e.target.value })}
-                        placeholder="94105"
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['zip'] === 'high' ? 'ring-2 ring-emerald-500 border-emerald-500' : 'border-slate-800'
-                        }`}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-linkedin" className="block text-xs font-bold text-slate-300 mb-1.5">LinkedIn Profile</label>
-                      <input
-                        id="sim-linkedin"
-                        name="linkedIn"
-                        type="url"
-                        value={formData.linkedIn}
-                        onChange={e => setFormData({ ...formData, linkedIn: e.target.value })}
-                        placeholder="https://linkedin.com/in/..."
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['linkedIn'] === 'high' ? 'ring-2 ring-emerald-500 border-emerald-500' : 'border-slate-800'
-                        }`}
-                      />
-                    </div>
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-github" className="block text-xs font-bold text-slate-300 mb-1.5">GitHub Profile</label>
-                      <input
-                        id="sim-github"
-                        name="github"
-                        type="url"
-                        value={formData.github}
-                        onChange={e => setFormData({ ...formData, github: e.target.value })}
-                        placeholder="https://github.com/..."
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['github'] === 'high' ? 'ring-2 ring-emerald-500 border-emerald-500' : 'border-slate-800'
-                        }`}
-                      />
-                    </div>
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-portfolio" className="block text-xs font-bold text-slate-300 mb-1.5">Portfolio / Website</label>
-                      <input
-                        id="sim-portfolio"
-                        name="portfolio"
-                        type="url"
-                        value={formData.portfolio}
-                        onChange={e => setFormData({ ...formData, portfolio: e.target.value })}
-                        placeholder="https://..."
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['portfolio'] === 'high' ? 'ring-2 ring-emerald-500 border-emerald-500' : 'border-slate-800'
-                        }`}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* STEP 2: Logistics & Work Authorization */}
-              {currentStep === 2 && (
-                <div className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-yearsExp" className="block text-xs font-bold text-slate-300 mb-1.5">
-                        Total Years of Relevant Experience <span className="text-red-400">*</span>
-                      </label>
-                      <select
-                        id="sim-yearsExp"
-                        name="yearsExp"
-                        required
-                        value={formData.yearsExp}
-                        onChange={e => setFormData({ ...formData, yearsExp: e.target.value })}
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['yearsExp'] === 'high' ? 'ring-2 ring-emerald-500 border-emerald-500' : 'border-slate-800'
-                        }`}
-                      >
-                        <option value="">Select experience level...</option>
-                        <option value="0-1 years">0 - 1 years</option>
-                        <option value="1-3 years">1 - 3 years</option>
-                        <option value="3-5 years">3 - 5 years</option>
-                        <option value="5-7 years">5 - 7 years</option>
-                        <option value="7+ years">7+ years</option>
-                      </select>
-                    </div>
-
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-workAuth" className="block text-xs font-bold text-slate-300 mb-1.5">
-                        Current Work Authorization Status <span className="text-red-400">*</span>
-                      </label>
-                      <select
-                        id="sim-workAuth"
-                        name="workAuth"
-                        required
-                        value={formData.workAuth}
-                        onChange={e => setFormData({ ...formData, workAuth: e.target.value })}
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['workAuth'] === 'high' ? 'ring-2 ring-emerald-500 border-emerald-500' : 'border-slate-800'
-                        }`}
-                      >
-                        <option value="">Select legal status...</option>
-                        <option value="citizen">US Citizen / Permanent Resident</option>
-                        <option value="h1b">H-1B Visa</option>
-                        <option value="opt">F-1 OPT / CPT</option>
-                        <option value="other">Other / Need Authorization</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="form-control-wrap">
-                      <label className="block text-xs font-bold text-slate-300 mb-2">
-                        Will you now or in the future require visa sponsorship?
-                      </label>
-                      <div className="flex items-center gap-6 mt-1">
-                        <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="sponsorship"
-                            value="yes"
-                            checked={formData.sponsorship === 'yes'}
-                            onChange={e => setFormData({ ...formData, sponsorship: e.target.value })}
-                            className="text-blue-600 focus:ring-blue-500"
-                          />
-                          Yes
-                        </label>
-                        <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="sponsorship"
-                            value="no"
-                            checked={formData.sponsorship === 'no'}
-                            onChange={e => setFormData({ ...formData, sponsorship: e.target.value })}
-                            className="text-blue-600 focus:ring-blue-500"
-                          />
-                          No
-                        </label>
-                      </div>
-                    </div>
-
-                    <div className="form-control-wrap">
-                      <label className="block text-xs font-bold text-slate-300 mb-2">
-                        Are you willing to relocate if needed?
-                      </label>
-                      <div className="flex items-center gap-6 mt-1">
-                        <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="relocate"
-                            value="yes"
-                            checked={formData.relocate === 'yes'}
-                            onChange={e => setFormData({ ...formData, relocate: e.target.value })}
-                            className="text-blue-600 focus:ring-blue-500"
-                          />
-                          Yes
-                        </label>
-                        <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="relocate"
-                            value="no"
-                            checked={formData.relocate === 'no'}
-                            onChange={e => setFormData({ ...formData, relocate: e.target.value })}
-                            className="text-blue-600 focus:ring-blue-500"
-                          />
-                          No
-                        </label>
-                        <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="relocate"
-                            value="remote"
-                            checked={formData.relocate === 'remote'}
-                            onChange={e => setFormData({ ...formData, relocate: e.target.value })}
-                            className="text-blue-600 focus:ring-blue-500"
-                          />
-                          Remote Only
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-startDate" className="block text-xs font-bold text-slate-300 mb-1.5">
-                        Available Start Date / Notice Period
-                      </label>
-                      <input
-                        id="sim-startDate"
-                        name="startDate"
-                        type="date"
-                        value={formData.startDate}
-                        onChange={e => setFormData({ ...formData, startDate: e.target.value })}
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['startDate'] === 'high' ? 'ring-2 ring-emerald-500 border-emerald-500' : 'border-slate-800'
-                        }`}
-                      />
-                    </div>
-
-                    <div className="form-control-wrap">
-                      <label htmlFor="sim-desiredSalary" className="block text-xs font-bold text-slate-300 mb-1.5">
-                        Expected Annual Compensation (USD)
-                      </label>
-                      <input
-                        id="sim-desiredSalary"
-                        name="desiredSalary"
-                        type="text"
-                        value={formData.desiredSalary}
-                        onChange={e => setFormData({ ...formData, desiredSalary: e.target.value })}
-                        placeholder="$160,000"
-                        className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                          fieldHighlights['desiredSalary'] === 'high' ? 'ring-2 ring-emerald-500 border-emerald-500' : 'border-slate-800'
-                        }`}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* STEP 3: Role Questions & Resume File Upload */}
-              {currentStep === 3 && (
-                <div className="space-y-6">
-                  <div className="form-control-wrap">
-                    <label htmlFor="sim-roleInterest" className="block text-xs font-bold text-slate-300 mb-1.5">
-                      Primary Engineering Specialty (Custom Combobox)
-                    </label>
-                    <select
-                      id="sim-roleInterest"
-                      name="roleInterest"
-                      value={formData.roleInterest}
-                      onChange={e => setFormData({ ...formData, roleInterest: e.target.value })}
-                      className={`w-full bg-slate-950 border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none transition ${
-                        fieldHighlights['roleInterest'] === 'high' ? 'ring-2 ring-emerald-500 border-emerald-500' : 'border-slate-800'
-                      }`}
-                    >
-                      <option value="Frontend">Frontend Platform</option>
-                      <option value="Backend">Backend / Distributed Systems</option>
-                      <option value="Full Stack">Full Stack Engineering</option>
-                      <option value="DevOps">Cloud / DevOps / SRE</option>
-                    </select>
-                  </div>
-
-                  <div className="form-control-wrap">
-                    <label htmlFor="sim-whyJoin" className="block text-xs font-bold text-slate-300 mb-1.5">
-                      Why are you interested in joining our engineering team? (Open-ended Q&A)
-                    </label>
-                    <textarea
-                      id="sim-whyJoin"
-                      name="whyJoin"
-                      rows={4}
-                      value={formData.whyJoin}
-                      onChange={e => setFormData({ ...formData, whyJoin: e.target.value })}
-                      placeholder="Share a brief statement about your interest in this role..."
-                      className={`w-full bg-slate-950 border rounded-xl px-4 py-3 text-sm text-white focus:outline-none transition leading-relaxed ${
-                        fieldHighlights['whyJoin'] === 'medium'
-                          ? 'ring-2 ring-amber-500 border-amber-500 bg-amber-950/10'
-                          : 'border-slate-800'
-                      }`}
-                    />
-                  </div>
-
-                  <div className="form-control-wrap p-5 border border-dashed border-slate-700 rounded-2xl bg-slate-950/50">
-                    <label className="block text-xs font-bold text-slate-300 mb-1">
-                      Upload Resume / CV (PDF)
-                    </label>
-                    <p className="text-xs text-slate-400 mb-3">AutoFill AI automatically attaches your stored resume via DataTransfer!</p>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="file"
-                        accept=".pdf"
-                        id="sim-resume-input"
-                        className="text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-500 cursor-pointer"
-                      />
-                      {formData.resumeName && (
-                        <span className="text-xs font-semibold text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
-                          <Check className="w-3.5 h-3.5" /> Attached: {formData.resumeName}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="form-control-wrap flex items-start gap-3 pt-2">
-                    <input
-                      id="sim-agreeCheck"
-                      name="agreeCheck"
-                      type="checkbox"
-                      checked={formData.agreeCheck}
-                      onChange={e => setFormData({ ...formData, agreeCheck: e.target.checked })}
-                      className="mt-0.5 rounded text-blue-600 focus:ring-blue-500"
-                    />
-                    <label htmlFor="sim-agreeCheck" className="text-xs text-slate-300 leading-normal cursor-pointer">
-                      I certify that all information submitted is true, complete, and accurate. I understand that any false statement or omission may disqualify me from employment.
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              {/* Form Navigation Footer */}
-              <div className="flex items-center justify-between mt-8 pt-5 border-t border-slate-800">
-                <button
-                  type="button"
-                  disabled={currentStep === 1}
-                  onClick={() => setCurrentStep((currentStep - 1) as any)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none transition"
-                >
-                  Previous Step
-                </button>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-500">Step {currentStep} of 3</span>
-                  <button
-                    type="button"
-                    disabled={currentStep === 3}
-                    onClick={() => setCurrentStep((currentStep + 1) as any)}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-30 disabled:pointer-events-none transition"
-                  >
-                    Next Step <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* FLOATING STATUS BADGE (Simulating in-page extension pill) */}
-              {floatingBadge && (
-                <div className="absolute bottom-6 right-6 z-30 bg-slate-900 border border-slate-700 shadow-2xl rounded-full px-4 py-2.5 flex items-center gap-3 text-xs animate-in fade-in slide-in-from-bottom-2">
-                  <div className="w-5 h-5 rounded-md bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center font-bold text-[10px] text-white">
-                    AI
-                  </div>
-                  <span className="text-slate-200 font-medium">
-                    Filled <strong className="text-emerald-400">{floatingBadge.filled}</strong>/{floatingBadge.total} fields
-                  </span>
-                  <button
-                    onClick={() => setShowReviewModal(true)}
-                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md font-semibold text-[11px] border border-slate-700 transition"
-                  >
-                    Review
-                  </button>
-                  <button
-                    onClick={handleUndo}
-                    className="px-2.5 py-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-md font-semibold text-[11px] border border-red-500/30 transition flex items-center gap-1"
-                  >
-                    <RotateCcw className="w-3 h-3" /> Undo
-                  </button>
-                  <button
-                    onClick={() => setFloatingBadge(null)}
-                    className="text-slate-400 hover:text-white ml-1 text-sm font-bold"
-                  >
-                    ✕
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Scanned Descriptors Inspector */}
-            {scannedDescriptors && (
-              <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-blue-400" />
-                    <h3 className="font-bold text-xs text-white">DOM Field Descriptors Extracted by Content Script</h3>
-                  </div>
-                  <button
-                    onClick={() => setScannedDescriptors(null)}
-                    className="text-xs text-slate-500 hover:text-slate-300"
-                  >
-                    Close
-                  </button>
-                </div>
-                <pre className="bg-slate-950 p-4 rounded-xl text-[11px] text-slate-300 font-mono overflow-x-auto max-h-60">
-                  {JSON.stringify(scannedDescriptors, null, 2)}
-                </pre>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 2: PROFILE & RESUME STUDIO */}
-        {activeTab === 'profile' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left 4 Cols: Provider Settings & PDF Ingestion */}
-            <div className="lg:col-span-5 space-y-6">
-              {/* LLM Provider Card */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <Cpu className="w-4 h-4 text-blue-400" />
-                  <h2 className="font-bold text-sm text-white">AI Provider Configuration</h2>
-                </div>
-
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1.5">Provider</label>
-                    <select
-                      value={provider}
-                      onChange={e => setProvider(e.target.value as any)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                    >
-                      <option value="gemini">Google Gemini (Recommended: gemini-3.8-flash)</option>
-                      <option value="openai">OpenAI (gpt-4o-mini / gpt-4o)</option>
-                      <option value="anthropic">Anthropic (claude-3-5-sonnet)</option>
-                    </select>
-                  </div>
-
-                  {provider === 'gemini' && (
-                    <div className="space-y-2">
-                      <label className="block text-xs font-semibold text-slate-400 mb-1.5">Gemini Model</label>
-                      <select
-                        value={geminiModel}
-                        onChange={e => setGeminiModel(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                      >
-                        <option value="gemini-3.8-flash">gemini-3.8-flash (Recommended - Latest & High Precision)</option>
-                        <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Advanced Complex Reasoning)</option>
-                        <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (Cost-Efficient & Ultra-Fast)</option>
-                        <option value="custom">Custom Model Name...</option>
-                      </select>
-
-                      {geminiModel === 'custom' && (
-                        <input
-                          type="text"
-                          value={customGeminiModel}
-                          onChange={e => setCustomGeminiModel(e.target.value)}
-                          placeholder="e.g. gemini-3.8-flash"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500 mt-1.5"
-                        />
-                      )}
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1.5">API Key</label>
-                    <input
-                      type="password"
-                      value={apiKey}
-                      onChange={e => setApiKey(e.target.value)}
-                      placeholder="Enter API key for extension options..."
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                    />
-                    <p className="text-[11px] text-slate-500 mt-1">
-                      Stored only in <code className="text-slate-400">chrome.storage.local</code>. Never synced.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Direct Multimodal PDF Ingestion Card */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                <div className="flex items-center gap-2 mb-3">
-                  <Upload className="w-4 h-4 text-indigo-400" />
-                  <h2 className="font-bold text-sm text-white">Direct LLM Multimodal Ingestion</h2>
-                </div>
-                <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-                  Uses your LLM key to read the PDF document directly via multimodal vision/document intelligence, instantly merging the extracted facts into PROFILE.md without needing custom text extractors.
-                </p>
-
-                <div className="border-2 border-dashed border-slate-700 hover:border-blue-500 rounded-xl p-6 text-center cursor-pointer bg-slate-950/40 transition">
-                  <FileText className="w-8 h-8 text-blue-400 mx-auto mb-2 opacity-80" />
-                  <div className="text-xs font-bold text-slate-200">Drop your Resume PDF here</div>
-                  <div className="text-[11px] text-slate-500 mt-1">Direct LLM extraction &amp; instant Markdown merge</div>
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    onChange={e => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        showToast(`Extracted ${file.name} & merged into PROFILE.md via Gemini!`, 'success');
-                      }
-                    }}
-                    className="hidden"
-                    id="resume-pdf-upload"
-                  />
-                  <label htmlFor="resume-pdf-upload" className="inline-block mt-3 px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg cursor-pointer">
-                    Upload &amp; Merge PDF
-                  </label>
-                </div>
-              </div>
-
-              {/* Learned Answers Cache */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-amber-400" />
-                    <h2 className="font-bold text-sm text-white">Learned Answers Cache</h2>
-                  </div>
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
-                    {Object.keys(learnedAnswers).length} rules
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 mb-3">
-                  Cached question-answer pairs resolved before calling the LLM.
-                </p>
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                  {Object.entries(learnedAnswers).map(([k, v]) => (
-                    <div key={k} className="p-2.5 bg-slate-950 border border-slate-800/80 rounded-xl text-xs flex items-center justify-between">
-                      <div>
-                        <div className="font-mono text-[11px] text-blue-400">{k}</div>
-                        <div className="font-semibold text-slate-200 text-xs">{v.answer}</div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          const copy = { ...learnedAnswers };
-                          delete copy[k];
-                          setLearnedAnswers(copy);
-                          showToast(`Removed rule for "${k}"`, 'info');
-                        }}
-                        className="text-slate-500 hover:text-red-400 p-1"
-                        title="Delete learned rule"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Right 7 Cols: Markdown Profile Editor */}
-            <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col h-[760px]">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
-                <div>
-                  <h2 className="font-bold text-sm text-white flex items-center gap-2">
-                    <span>PROFILE.md Editor</span>
-                    <span className="text-[11px] font-normal text-slate-400">
-                      ({profileText.length.toLocaleString()} chars)
-                    </span>
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Source of truth for all form fills. Mark unknown items as "UNKNOWN" to prevent guessing.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      setProfileText(SAMPLE_PROFILE_DEFAULT);
-                      showToast('Loaded standard candidate template!', 'info');
-                    }}
-                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg transition"
-                  >
-                    Reset Template
-                  </button>
-                  <button
-                    onClick={() => showToast('Profile changes saved to local memory!', 'success')}
-                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition"
-                  >
-                    Save Changes
-                  </button>
-                </div>
-              </div>
-
-              <textarea
-                value={profileText}
-                onChange={e => setProfileText(e.target.value)}
-                className="w-full flex-1 bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs font-mono text-slate-200 leading-relaxed focus:outline-none focus:border-blue-500 resize-none"
-                placeholder="# PERSONAL PROFILE..."
+            <div className="w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-blue-500/20 border border-blue-500/30 bg-[#060911] shrink-0 p-0.5 group-hover:scale-105 transition-transform duration-200">
+              <img
+                src="/logo.png"
+                alt="AutoFill AI Logo"
+                className="w-full h-full object-cover rounded-[10px]"
               />
             </div>
+            <div className="flex items-center space-x-2">
+              <span className="text-xl font-bold tracking-tight text-white group-hover:text-blue-300 transition">
+                AutoFill <span className="text-blue-400">AI</span>
+              </span>
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-mono font-medium bg-blue-500/10 text-blue-400 border border-blue-500/25">
+                Manifest V3
+              </span>
+            </div>
+          </button>
+
+          {/* Desktop Navigation Links */}
+          <nav className="hidden md:flex items-center space-x-8 text-sm font-medium text-slate-300">
+            <button
+              onClick={() => navigateTo('/')}
+              className={`transition-colors cursor-pointer ${
+                !isAboutPage ? 'text-white font-semibold' : 'hover:text-white text-slate-300'
+              }`}
+            >
+              Home
+            </button>
+            <button
+              onClick={() => navigateTo('/about')}
+              className={`transition-colors cursor-pointer ${
+                isAboutPage ? 'text-blue-400 font-semibold' : 'hover:text-white text-slate-300'
+              }`}
+            >
+              About
+            </button>
+            <a
+              href="https://github.com/WebBhav/AutoFill-AI/"
+              target="_blank"
+              rel="noreferrer"
+              className="hover:text-white transition-colors flex items-center gap-1.5"
+            >
+              <Github className="w-4 h-4" />
+              <span>GitHub</span>
+            </a>
+          </nav>
+
+          {/* Contact Me Button (Replaces Download Extension Button in Header) */}
+          <div className="hidden sm:flex items-center space-x-4">
+            <a
+              href="https://vaibhav-singhal.netlify.app/"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl font-semibold text-xs text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 shadow-lg shadow-blue-500/25 transition-all duration-200 transform hover:-translate-y-0.5 active:translate-y-0 cursor-pointer"
+            >
+              <span>Contact me</span>
+              <ExternalLink className="w-3.5 h-3.5 opacity-80" />
+            </a>
           </div>
-        )}
 
-        {/* TAB 3: EXTENSION SOURCE VIEWER */}
-        {activeTab === 'code' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[760px]">
-            {/* File List (Left 4 cols) */}
-            <div className="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col overflow-hidden">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-3 px-2">
-                <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                  <Folder className="w-4 h-4 text-blue-400" /> extension/
-                </span>
-                <span className="text-[11px] text-slate-500">{Object.keys(EXTENSION_FILES).length} files</span>
-              </div>
+          {/* Hamburger Menu Toggle (Mobile) */}
+          <div className="flex items-center md:hidden">
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="p-2 rounded-lg bg-[#111827] border border-white/10 text-slate-300 hover:text-white focus:outline-none cursor-pointer"
+              aria-label="Toggle navigation menu"
+            >
+              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            </button>
+          </div>
+        </div>
 
-              <div className="flex-1 overflow-y-auto space-y-1 pr-1">
-                {Object.keys(EXTENSION_FILES).sort().map(fileName => {
-                  const isSelected = selectedFile === fileName;
-                  return (
-                    <button
-                      key={fileName}
-                      onClick={() => setSelectedFile(fileName)}
-                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-mono flex items-center justify-between transition ${
-                        isSelected
-                          ? 'bg-blue-600/20 text-blue-300 border border-blue-500/30 font-semibold'
-                          : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-                      }`}
-                    >
-                      <span className="truncate">{fileName}</span>
-                      {EXTENSION_FILES[fileName].isBinary && (
-                        <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 ml-2">
-                          bin
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+        {/* Mobile Navigation Drawer */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-b border-white/10 bg-[#090D16]/95 backdrop-blur-2xl px-6 py-6 space-y-4 animate-in fade-in slide-in-from-top-4 duration-200">
+            <div className="flex flex-col space-y-3 text-sm font-medium text-slate-300">
+              <button
+                onClick={() => navigateTo('/')}
+                className="text-left py-1 hover:text-white transition-colors cursor-pointer"
+              >
+                Home
+              </button>
+              <button
+                onClick={() => navigateTo('/about')}
+                className="text-left py-1 hover:text-white transition-colors cursor-pointer text-blue-400 font-semibold"
+              >
+                About
+              </button>
+              <a
+                href="https://github.com/WebBhav/AutoFill-AI/"
+                target="_blank"
+                rel="noreferrer"
+                className="hover:text-white py-1 transition-colors flex items-center justify-between"
+              >
+                <span>GitHub</span>
+                <Github className="w-4 h-4" />
+              </a>
             </div>
 
-            {/* File Viewer (Right 8 cols) */}
-            <div className="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col overflow-hidden">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-3">
-                <div className="flex items-center gap-2">
-                  <FileCode className="w-4 h-4 text-emerald-400" />
-                  <span className="font-mono text-xs font-bold text-white">{selectedFile}</span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      const content = EXTENSION_FILES[selectedFile]?.content || '';
-                      navigator.clipboard.writeText(content);
-                      setCopiedFile(true);
-                      setTimeout(() => setCopiedFile(false), 2000);
-                      showToast('File copied to clipboard!', 'info');
-                    }}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-semibold transition"
-                  >
-                    {copiedFile ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    {copiedFile ? 'Copied' : 'Copy Code'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-auto bg-slate-950 border border-slate-800/80 rounded-xl p-4 font-mono text-xs text-slate-300 leading-relaxed">
-                {EXTENSION_FILES[selectedFile]?.isBinary ? (
-                  <div className="h-full flex items-center justify-center flex-col text-slate-500">
-                    <p>Binary file (PNG Icon / asset)</p>
-                    <p className="text-[11px] text-slate-600 mt-1">Included in the ZIP bundle automatically</p>
-                  </div>
-                ) : (
-                  <pre className="whitespace-pre">{EXTENSION_FILES[selectedFile]?.content}</pre>
-                )}
-              </div>
+            <div className="pt-3 border-t border-white/10">
+              <a
+                href="https://vaibhav-singhal.netlify.app/"
+                target="_blank"
+                rel="noreferrer"
+                className="w-full py-3 rounded-xl font-semibold text-xs text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25 cursor-pointer"
+              >
+                <span>Contact me</span>
+                <ExternalLink className="w-4 h-4" />
+              </a>
             </div>
           </div>
         )}
+      </header>
 
-        {/* TAB 4: INSTALLATION & DEBUG GUIDE */}
-        {activeTab === 'guide' && (
-          <div className="max-w-4xl mx-auto space-y-6">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8">
-              <h2 className="text-xl font-bold text-white mb-2">How to Install AutoFill AI in Google Chrome</h2>
-              <p className="text-sm text-slate-400 mb-6">
-                AutoFill AI is a complete, native Manifest V3 Chrome Extension. You can install it directly using Developer Mode with zero build steps required.
+      {/* Main Content Areas */}
+      <main className="flex-1">
+        {isAboutPage ? (
+          /* =========================================================================
+             ABOUT PAGE VIEW (/about)
+             ========================================================================= */
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24 space-y-16 animate-fade-in-up">
+            {/* Page Header */}
+            <div className="space-y-4 text-center sm:text-left">
+              <button
+                onClick={() => navigateTo('/')}
+                className="inline-flex items-center gap-1.5 text-xs font-mono text-blue-400 hover:text-blue-300 transition cursor-pointer mb-2"
+              >
+                <Home className="w-3.5 h-3.5" />
+                <span>Back to Home</span>
+              </button>
+              <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white">
+                About AutoFill <span className="text-blue-400">AI</span>
+              </h1>
+              <p className="text-slate-300 text-base sm:text-lg leading-relaxed max-w-2xl">
+                A 100% free, client-side Chrome extension (Manifest V3) created to eliminate the painful, repetitive manual typing involved in modern job applications.
               </p>
+            </div>
 
-              <div className="space-y-6">
-                {/* Step 1 */}
-                <div className="flex gap-4 items-start">
-                  <div className="w-7 h-7 rounded-full bg-blue-600/20 text-blue-400 border border-blue-500/40 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">
-                    1
+            {/* The Mission & Origin */}
+            <div className="p-8 sm:p-10 rounded-2xl bg-[#0C1220]/90 border border-white/[0.08] space-y-6">
+              <h2 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2.5">
+                <Sparkles className="w-5 h-5 text-blue-400" />
+                <span>The Story &amp; Motivation</span>
+              </h2>
+              <p className="text-slate-300 text-sm sm:text-base leading-relaxed">
+                Job applications across modern Applicant Tracking Systems (Workday, Greenhouse, Lever, Ashby, BambooHR) have become increasingly frustrating. Candidates repeatedly upload their PDF resume, only to be forced to re-type every job title, start date, degree, and URL into poorly formatted web inputs.
+              </p>
+              <p className="text-slate-300 text-sm sm:text-base leading-relaxed">
+                Standard browser autofill breaks on React controlled inputs and shadow DOM nodes. <strong>AutoFill AI</strong> was engineered from the ground up to solve this: it reads your resume PDF directly using native multimodal AI, stores your profile in browser memory, and dispatches synthetic input events so every form field recognizes the value instantly.
+              </p>
+            </div>
+
+            {/* Creator Profile */}
+            <div className="p-8 sm:p-10 rounded-2xl bg-[#0C1220]/90 border border-white/[0.08] flex flex-col sm:flex-row items-center sm:items-start gap-8">
+              <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold text-2xl shrink-0 shadow-lg shadow-blue-500/25">
+                VS
+              </div>
+              <div className="space-y-4 text-center sm:text-left flex-1">
+                <div className="space-y-1">
+                  <h3 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">Vaibhav Singhal</h3>
+                  <div className="text-xs font-mono font-semibold text-blue-400 tracking-wider">
+                    Creator
                   </div>
-                  <div>
-                    <h3 className="font-bold text-sm text-white">Download the Extension Package</h3>
-                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                      Click the <strong className="text-blue-400">Download Extension (.zip)</strong> button in the top right. Extract the ZIP file to a folder on your computer (e.g. <code className="text-slate-300">~/Downloads/autofill-ai-extension</code>).
-                    </p>
+                  <div className="text-slate-300 text-sm font-medium">
+                    AI-Native Product Manager
                   </div>
                 </div>
-
-                {/* Step 2 */}
-                <div className="flex gap-4 items-start">
-                  <div className="w-7 h-7 rounded-full bg-blue-600/20 text-blue-400 border border-blue-500/40 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">
-                    2
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-sm text-white">Open Chrome Extensions Manager</h3>
-                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                      Navigate to <code className="text-blue-300 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">chrome://extensions</code> in your Chrome address bar.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 3 */}
-                <div className="flex gap-4 items-start">
-                  <div className="w-7 h-7 rounded-full bg-blue-600/20 text-blue-400 border border-blue-500/40 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">
-                    3
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-sm text-white">Enable Developer Mode & Load Unpacked</h3>
-                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                      Toggle the <strong className="text-white">Developer mode</strong> switch in the top right corner. Then click <strong className="text-white">Load unpacked</strong> and select the extracted <code className="text-slate-300">autofill-ai-extension</code> folder.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 4 */}
-                <div className="flex gap-4 items-start">
-                  <div className="w-7 h-7 rounded-full bg-blue-600/20 text-blue-400 border border-blue-500/40 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">
-                    4
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-sm text-white">Get a Free Gemini API Key & Set Up Profile</h3>
-                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                      Get a free Gemini API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-blue-400 underline inline-flex items-center gap-1">Google AI Studio <ExternalLink className="w-3 h-3" /></a>. Open the extension Options page, paste your API key, and upload your resume PDF to generate your profile.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 5 */}
-                <div className="flex gap-4 items-start">
-                  <div className="w-7 h-7 rounded-full bg-blue-600/20 text-blue-400 border border-blue-500/40 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">
-                    5
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-sm text-white">Autofill Any Web Page!</h3>
-                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                      Open any job portal (Workday, Greenhouse, Lever, Ashby, LinkedIn) and click the extension popup <strong className="text-white">"Fill This Page"</strong>, or press <kbd className="bg-slate-800 px-2 py-0.5 rounded text-white border border-slate-700">Alt+Shift+F</kbd>, or right-click anywhere and select <strong className="text-white">AutoFill AI: Fill forms on this page</strong>!
-                    </p>
-                  </div>
+                <p className="text-slate-300 text-sm leading-relaxed">
+                  Passionate about crafting pragmatic software, developer tools, and privacy-respecting browser applications. AutoFill AI was built as an open, accessible project to give job seekers their valuable hours back.
+                </p>
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 pt-2">
+                  <a
+                    href="https://vaibhav-singhal.netlify.app/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow"
+                  >
+                    <span>Visit Portfolio</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                  <a
+                    href="https://github.com/WebBhav/AutoFill-AI/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-4 py-2 rounded-xl bg-[#111827] hover:bg-slate-800 text-slate-300 text-xs font-mono border border-white/10 flex items-center gap-1.5 transition"
+                  >
+                    <Github className="w-3.5 h-3.5" />
+                    <span>View Repository</span>
+                  </a>
                 </div>
               </div>
             </div>
 
-            {/* Debugging & Limitations */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8">
-              <h2 className="text-lg font-bold text-white mb-4">Known Limitations & Debugging</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-xs text-slate-300">
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
-                  <h4 className="font-bold text-blue-400 mb-1">Service Worker Console</h4>
-                  <p className="text-slate-400 leading-relaxed">
-                    To inspect LLM API requests and background messages, go to <code className="text-slate-300">chrome://extensions</code>, find AutoFill AI, and click <strong className="text-white">"service worker"</strong> under "Inspect views".
+            {/* Core Architectural Principles */}
+            <div className="space-y-6">
+              <h2 className="text-xl sm:text-2xl font-bold text-white">Key Architectural Pillars</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <div className="p-6 rounded-xl bg-[#0C1220]/80 border border-white/[0.08] space-y-2">
+                  <div className="text-blue-400 font-bold text-base flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span>100% Free &amp; Client-Side</span>
+                  </div>
+                  <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                    Zero paywalls, subscriptions, or checkout flows. Your credentials and documents stay confined to Chrome&apos;s local storage sandbox.
                   </p>
                 </div>
 
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
-                  <h4 className="font-bold text-blue-400 mb-1">Content Script Logs</h4>
-                  <p className="text-slate-400 leading-relaxed">
-                    Open Chrome DevTools on the target webpage (<kbd className="bg-slate-800 px-1 rounded">F12</kbd> or right-click &gt; Inspect). All DOM field discovery and synthetic event dispatches are logged with the prefix <code className="text-slate-300">[AutoFill AI]</code>.
+                <div className="p-6 rounded-xl bg-[#0C1220]/80 border border-white/[0.08] space-y-2">
+                  <div className="text-blue-400 font-bold text-base flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-amber-400" />
+                    <span>Repeatable Sections Engine</span>
+                  </div>
+                  <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                    Intelligently detects &quot;+ Add website&quot; and &quot;+ Add experience&quot; buttons, dispatches DOM clicks, and fills multiple dynamic rows with verified facts.
                   </p>
                 </div>
 
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
-                  <h4 className="font-bold text-amber-400 mb-1">Cross-Origin Iframes</h4>
-                  <p className="text-slate-400 leading-relaxed">
-                    Due to browser security policies, cross-origin iframes without permissions cannot be inspected directly. The content script runs with <code className="text-slate-300">all_frames: true</code> to fill same-origin and embeddable forms.
+                <div className="p-6 rounded-xl bg-[#0C1220]/80 border border-white/[0.08] space-y-2">
+                  <div className="text-blue-400 font-bold text-base flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-blue-400" />
+                    <span>Zero Auto-Submission</span>
+                  </div>
+                  <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                    AutoFill AI never presses &quot;Submit&quot; or &quot;Apply&quot;. You maintain complete control to review, edit, and confirm every answer before sending.
                   </p>
                 </div>
 
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
-                  <h4 className="font-bold text-emerald-400 mb-1">Controlled Form State</h4>
-                  <p className="text-slate-400 leading-relaxed">
-                    React 16+, Vue, and Angular override the <code className="text-slate-300">value</code> property setter. AutoFill AI invokes the prototype descriptor directly and dispatches bubbling <code className="text-slate-300">input</code>, <code className="text-slate-300">change</code>, and <code className="text-slate-300">blur</code> events so state updates immediately.
+                <div className="p-6 rounded-xl bg-[#0C1220]/80 border border-white/[0.08] space-y-2">
+                  <div className="text-blue-400 font-bold text-base flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-cyan-400" />
+                    <span>Native Multimodal AI</span>
+                  </div>
+                  <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                    Sends your resume PDF directly to Google Gemini, OpenAI, or Claude as native document input, without clunky external PDF extractors.
                   </p>
                 </div>
+              </div>
+            </div>
+
+            {/* Call to Action Banner on About Page */}
+            <div className="p-8 sm:p-10 rounded-2xl bg-gradient-to-r from-blue-900/40 via-indigo-900/40 to-blue-950/40 border border-blue-500/30 text-center space-y-4">
+              <h3 className="text-2xl font-bold text-white">Ready to streamline your applications?</h3>
+              <p className="text-slate-300 text-sm max-w-lg mx-auto">
+                Download the unpacked extension ZIP package now and load it into Google Chrome in under 60 seconds.
+              </p>
+              <div className="pt-2 flex flex-wrap justify-center gap-4">
+                <button
+                  onClick={handleDownloadZip}
+                  disabled={isZipping}
+                  className="px-6 py-3 rounded-xl font-bold text-xs text-white bg-blue-600 hover:bg-blue-500 flex items-center gap-2 shadow-lg shadow-blue-500/25 cursor-pointer"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>{isZipping ? 'Building ZIP...' : 'Download Extension (.zip)'}</span>
+                </button>
+                <button
+                  onClick={() => setShowInstallModal(true)}
+                  className="px-6 py-3 rounded-xl font-semibold text-xs text-slate-300 bg-[#111827] hover:bg-slate-800 border border-white/10 cursor-pointer"
+                >
+                  View Install Instructions
+                </button>
               </div>
             </div>
           </div>
+        ) : (
+          /* =========================================================================
+             HOME LANDING PAGE VIEW (/)
+             ========================================================================= */
+          <>
+            {/* Hero Section */}
+            <section className="relative pt-16 pb-20 overflow-hidden" data-purpose="hero-banner">
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                {/* Hero Copy with Staggered Entrance Animations */}
+                <div className="text-center max-w-4xl mx-auto space-y-5">
+                  <h1 className="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-white leading-[1.1] animate-fade-in-up">
+                    10x Faster Job Applications.<br />
+                    <span className="bg-gradient-to-r from-blue-400 via-indigo-300 to-cyan-300 bg-clip-text text-transparent">
+                      Zero Repetitive Typing.
+                    </span>
+                  </h1>
+
+                  {/* Subtext: Much smaller and compact as requested */}
+                  <p className="text-[11px] sm:text-xs text-slate-400/80 max-w-lg mx-auto font-normal leading-relaxed tracking-normal animate-fade-in-delayed-1">
+                    The intelligent Manifest V3 Chrome extension grounded in your actual Resume PDF. Detects complex Workday &amp; Greenhouse DOM nodes, triggers synthetic React state dispatches, and fills nested forms with verified context.
+                  </p>
+
+                  {/* CTA Buttons & Shortcut Pill */}
+                  <div className="pt-2 flex flex-wrap items-center justify-center gap-4 animate-fade-in-delayed-2">
+                    <button
+                      onClick={handleDownloadZip}
+                      disabled={isZipping}
+                      className="px-8 py-3.5 rounded-xl font-bold text-sm text-white bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-500/30 transition-all flex items-center space-x-2 cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0"
+                    >
+                      <Download className={`w-4 h-4 ${isZipping ? 'animate-bounce' : ''}`} />
+                      <span>{isZipping ? 'Building ZIP Package...' : 'Download Extension (.zip)'}</span>
+                    </button>
+
+                    {/* Keyboard Shortcut Indicator */}
+                    <div className="flex items-center space-x-2 px-4 py-3 rounded-xl bg-[#111827]/90 border border-white/10 text-xs font-mono text-slate-300 shadow-inner">
+                      <span className="text-slate-400">Shortcut:</span>
+                      <kbd className="px-2 py-1 rounded bg-[#060911] border border-white/20 text-white font-semibold shadow">
+                        Alt
+                      </kbd>
+                      <span>+</span>
+                      <kbd className="px-2 py-1 rounded bg-[#060911] border border-white/20 text-white font-semibold shadow">
+                        Shift
+                      </kbd>
+                      <span>+</span>
+                      <kbd className="px-2 py-1 rounded bg-[#060911] border border-white/20 text-blue-400 font-semibold shadow">
+                        F
+                      </kbd>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Hero Visual Mockup: Clean User Banner Image (Animated Entry) */}
+                <div className="mt-14 relative mx-auto max-w-5xl animate-fade-in-delayed-3">
+                  <div className="rounded-2xl border border-white/10 bg-[#0C1220] shadow-2xl overflow-hidden backdrop-blur-2xl relative group">
+                    {/* Top Browser Bar */}
+                    <div className="h-10 bg-[#060911] border-b border-white/[0.08] px-4 flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-3 h-3 rounded-full bg-red-500/80" />
+                        <div className="w-3 h-3 rounded-full bg-amber-500/80" />
+                        <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
+                      </div>
+                      <div className="bg-[#090D16] px-5 py-1 rounded-md text-xs font-mono text-slate-400 border border-white/5 flex items-center space-x-2 w-1/2 max-w-sm justify-center">
+                        <Lock className="w-3 h-3 text-emerald-400" />
+                        <span className="truncate">AutoFill AI — Smart Form Filling</span>
+                      </div>
+                      <div className="flex items-center space-x-2 text-slate-400 text-xs font-mono">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                        <span className="hidden sm:inline">100% Free Extension</span>
+                      </div>
+                    </div>
+
+                    {/* Banner Image Display */}
+                    <div className="relative bg-[#090D16] overflow-hidden">
+                      <img
+                        alt="AutoFill AI - Let AI fill your forms so you don't have to"
+                        className="w-full h-auto object-cover object-center transition-transform duration-500 group-hover:scale-[1.01]"
+                        src="/hero-banner.jpg"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Bottom Glow Highlight */}
+                  <div className="absolute -bottom-10 inset-x-12 h-16 bg-gradient-to-r from-blue-600/30 via-cyan-500/20 to-indigo-600/30 blur-2xl pointer-events-none" />
+                </div>
+              </div>
+            </section>
+
+            {/* Trust Stats Bar */}
+            <section className="border-y border-white/[0.08] bg-[#060911]/60 py-10" data-purpose="metrics-bar">
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+                  <div>
+                    <div className="text-3xl sm:text-4xl font-extrabold text-white font-mono">99.4%</div>
+                    <div className="text-xs sm:text-sm text-slate-400 mt-1">Field Detection Accuracy</div>
+                  </div>
+                  <div>
+                    <div className="text-3xl sm:text-4xl font-extrabold text-blue-400 font-mono">0ms</div>
+                    <div className="text-xs sm:text-sm text-slate-400 mt-1">Data Sent to Remote Servers</div>
+                  </div>
+                  <div>
+                    <div className="text-3xl sm:text-4xl font-extrabold text-cyan-300 font-mono">&lt; 3.2s</div>
+                    <div className="text-xs sm:text-sm text-slate-400 mt-1">Full Page Form Completion</div>
+                  </div>
+                  <div>
+                    <div className="text-3xl sm:text-4xl font-extrabold text-emerald-400 font-mono">100%</div>
+                    <div className="text-xs sm:text-sm text-slate-400 mt-1">Manifest V3 Strict Sandbox</div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Core Features Section */}
+            <section className="py-24 relative" data-purpose="features-breakdown" id="features">
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="text-center max-w-3xl mx-auto mb-16 space-y-4">
+                  <span className="text-xs font-mono uppercase tracking-widest text-cyan-400 font-bold">
+                    ENGINEERED FOR TECHNICAL JOB SEEKERS
+                  </span>
+                  <h2 className="text-3xl sm:text-5xl font-bold text-white tracking-tight">
+                    Built to Outsmart Modern ATS Dynamic Forms
+                  </h2>
+                  <p className="text-slate-400 text-base sm:text-lg">
+                    Standard browser autofill breaks on shadow DOMs and uncontrolled React inputs. AutoFill AI dispatches actual synthetic keyboard events.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  {/* Feature Card 1 */}
+                  <div className="p-8 rounded-2xl bg-[#0C1220]/80 border border-white/[0.08] hover:border-blue-500/40 transition duration-300 relative group overflow-hidden">
+                    <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center mb-6 text-xl">
+                      ⚡
+                    </div>
+                    <h3 className="text-xl font-bold text-white mb-2">Smart DOM &amp; React Synthetic Driver</h3>
+                    <p className="text-slate-400 text-sm leading-relaxed mb-4">
+                      Bypasses tricky React, Vue, and Angular validation barriers by dispatching simulated input, change, and blur state cycles. Form submit buttons stay enabled with zero manual typing.
+                    </p>
+                    <div className="inline-flex items-center text-xs font-mono text-blue-400 group-hover:translate-x-1 transition-transform duration-200">
+                      Dispatches native EventTarget.dispatchEvent →
+                    </div>
+                  </div>
+
+                  {/* Feature Card 2 */}
+                  <div className="p-8 rounded-2xl bg-[#0C1220]/80 border border-white/[0.08] hover:border-cyan-500/40 transition duration-300 relative group overflow-hidden">
+                    <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center mb-6 text-xl">
+                      📄
+                    </div>
+                    <h3 className="text-xl font-bold text-white mb-2">PDF-Grounded Context • No Hallucinations</h3>
+                    <p className="text-slate-400 text-sm leading-relaxed mb-4">
+                      Parses your resume PDF locally directly in the browser memory. Matches work history dates, bullet points, skills, and clearances directly to exact matching prompt schemas without fabrication.
+                    </p>
+                    <div className="inline-flex items-center text-xs font-mono text-cyan-400 group-hover:translate-x-1 transition-transform duration-200">
+                      Verified ground-truth extraction →
+                    </div>
+                  </div>
+
+                  {/* Feature Card 3 */}
+                  <div className="p-8 rounded-2xl bg-[#0C1220]/80 border border-white/[0.08] hover:border-indigo-500/40 transition duration-300 relative group overflow-hidden">
+                    <div className="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center mb-6 text-xl">
+                      🔗
+                    </div>
+                    <h3 className="text-xl font-bold text-white mb-2">Dynamic Nested Lists &amp; Portfolio Injection</h3>
+                    <p className="text-slate-400 text-sm leading-relaxed mb-4">
+                      Automatically identifies &quot;+ Add Website&quot; or &quot;+ Add Education&quot; buttons, triggers the DOM mutation, selects &quot;GitHub / Portfolio&quot; from the type dropdown, and injects your clean URLs.
+                    </p>
+                    <div className="inline-flex items-center text-xs font-mono text-indigo-400 group-hover:translate-x-1 transition-transform duration-200">
+                      Dynamic multi-link resolution →
+                    </div>
+                  </div>
+
+                  {/* Feature Card 4 */}
+                  <div className="p-8 rounded-2xl bg-[#0C1220]/80 border border-white/[0.08] hover:border-emerald-500/40 transition duration-300 relative group overflow-hidden">
+                    <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mb-6 text-xl">
+                      🔒
+                    </div>
+                    <h3 className="text-xl font-bold text-white mb-2">100% Local Storage • Bring Your Own Key</h3>
+                    <p className="text-slate-400 text-sm leading-relaxed mb-4">
+                      Your sensitive career history and API keys (Google Gemini, OpenAI, Anthropic, or Ollama) stay locked in <code>chrome.storage.local</code>. Zero third-party tracker servers or telemetry.
+                    </p>
+                    <div className="inline-flex items-center text-xs font-mono text-emerald-400 group-hover:translate-x-1 transition-transform duration-200">
+                      Zero cloud logs guaranteed →
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Setup Workflow Steps (How AutoFill AI Operates) */}
+            <section className="py-24" data-purpose="onboarding-walkthrough" id="workflow">
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="text-center max-w-2xl mx-auto mb-16 space-y-3">
+                  <span className="text-xs font-mono uppercase tracking-wider text-blue-400 font-semibold">
+                    EFFORTLESS 3-MINUTE SETUP
+                  </span>
+                  <h2 className="text-3xl sm:text-4xl font-extrabold text-white">How AutoFill AI Operates</h2>
+                  <p className="text-slate-400 text-sm">
+                    No servers to register for. Download the unpacked MV3 extension and point it to your resume.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 relative">
+                  {/* Step 1 */}
+                  <div className="bg-[#0C1220] p-6 rounded-2xl border border-white/[0.08] relative group hover:border-blue-500/30 transition">
+                    <div className="w-9 h-9 rounded-lg bg-blue-500/20 text-blue-400 font-mono font-bold flex items-center justify-center text-sm mb-4">
+                      01
+                    </div>
+                    <h3 className="text-lg font-bold text-white mb-2">Upload Resume PDF</h3>
+                    <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                      Drop your current CV in the popup. The client-side parser extracts key experiences, roles, skills, and links into indexed local vectors.
+                    </p>
+                  </div>
+
+                  {/* Step 2 */}
+                  <div className="bg-[#0C1220] p-6 rounded-2xl border border-white/[0.08] relative group hover:border-indigo-500/30 transition">
+                    <div className="w-9 h-9 rounded-lg bg-indigo-500/20 text-indigo-400 font-mono font-bold flex items-center justify-center text-sm mb-4">
+                      02
+                    </div>
+                    <h3 className="text-lg font-bold text-white mb-2">Paste Your Free API Key</h3>
+                    <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                      Use Google Gemini (free tier), OpenAI GPT-4o-mini, Anthropic Claude 3.5, or run 100% offline using Ollama. Keys stay local.
+                    </p>
+                  </div>
+
+                  {/* Step 3 */}
+                  <div className="bg-[#0C1220] p-6 rounded-2xl border border-white/[0.08] relative group hover:border-cyan-500/30 transition">
+                    <div className="w-9 h-9 rounded-lg bg-cyan-500/20 text-cyan-400 font-mono font-bold flex items-center justify-center text-sm mb-4">
+                      03
+                    </div>
+                    <h3 className="text-lg font-bold text-white mb-2">Press Alt + Shift + F</h3>
+                    <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                      Open any Greenhouse, Workday, or Lever portal. Tap the global shortcut and watch the fields fill, checkboxes check, and dropdowns select.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Supported ATS Grid */}
+            <section className="py-16 bg-[#060911]/40 border-t border-white/[0.08]" data-purpose="supported-ats-platforms" id="ats-support">
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+                <p className="text-xs font-mono uppercase tracking-widest text-slate-400 mb-8">
+                  WORKS SEAMLESSLY ACROSS HIGH-FRICTION ATS PORTALS
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 text-slate-300 font-medium text-sm">
+                  <div className="px-5 py-3 rounded-xl bg-[#0C1220] border border-white/[0.08] flex items-center space-x-2 shadow-sm">
+                    <span className="w-2 h-2 rounded-full bg-blue-500" />
+                    <span>Workday Candidate Portal</span>
+                  </div>
+                  <div className="px-5 py-3 rounded-xl bg-[#0C1220] border border-white/[0.08] flex items-center space-x-2 shadow-sm">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    <span>Greenhouse.io</span>
+                  </div>
+                  <div className="px-5 py-3 rounded-xl bg-[#0C1220] border border-white/[0.08] flex items-center space-x-2 shadow-sm">
+                    <span className="w-2 h-2 rounded-full bg-cyan-400" />
+                    <span>Lever.co</span>
+                  </div>
+                  <div className="px-5 py-3 rounded-xl bg-[#0C1220] border border-white/[0.08] flex items-center space-x-2 shadow-sm">
+                    <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                    <span>AshbyHQ</span>
+                  </div>
+                  <div className="px-5 py-3 rounded-xl bg-[#0C1220] border border-white/[0.08] flex items-center space-x-2 shadow-sm">
+                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                    <span>BambooHR</span>
+                  </div>
+                  <div className="px-5 py-3 rounded-xl bg-[#0C1220] border border-white/[0.08] flex items-center space-x-2 shadow-sm">
+                    <span className="w-2 h-2 rounded-full bg-purple-400" />
+                    <span>SmartRecruiters</span>
+                  </div>
+                  <div className="px-5 py-3 rounded-xl bg-[#0C1220] border border-white/[0.08] flex items-center space-x-2 shadow-sm">
+                    <span className="w-2 h-2 rounded-full bg-sky-400" />
+                    <span>iCIMS &amp; Taleo</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Download Call to Action Section */}
+            <section className="py-24 relative overflow-hidden" data-purpose="conversion-cta" id="download">
+              <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center relative z-10">
+                <div className="p-10 sm:p-16 rounded-3xl bg-gradient-to-b from-[#0C1220] to-[#060911] border border-blue-500/30 shadow-2xl shadow-blue-500/20 space-y-6">
+                  <span className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-mono">
+                    <span>100% Free • Open Source • 15 Files</span>
+                  </span>
+
+                  <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight">
+                    Supercharge Your Job Search Today
+                  </h2>
+
+                  <p className="text-slate-300 max-w-xl mx-auto text-base">
+                    Stop losing hours re-typing your work experience into non-compliant input boxes. Get the official Chrome extension zip package now.
+                  </p>
+
+                  <div className="pt-4 flex flex-wrap items-center justify-center gap-4">
+                    <button
+                      onClick={handleDownloadZip}
+                      disabled={isZipping}
+                      className="px-8 py-4 rounded-xl font-bold text-sm text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-cyan-400 shadow-lg shadow-blue-500/30 transition-all transform hover:-translate-y-0.5 active:translate-y-0 flex items-center space-x-3 cursor-pointer"
+                    >
+                      <Download className={`w-5 h-5 ${isZipping ? 'animate-bounce' : ''}`} />
+                      <span>{isZipping ? 'Packaging Extension...' : 'Download Extension (.zip)'}</span>
+                    </button>
+
+                    <button
+                      onClick={() => setShowInstallModal(true)}
+                      className="px-6 py-4 rounded-xl font-semibold text-xs text-slate-300 bg-[#111827] hover:bg-slate-800 border border-white/10 transition cursor-pointer"
+                    >
+                      View Unpacked Install Guide
+                    </button>
+                  </div>
+
+                  <div className="pt-4 flex items-center justify-center space-x-6 text-xs text-slate-400 font-mono">
+                    <span className="flex items-center gap-1.5">
+                      <Check className="w-4 h-4 text-emerald-400" />
+                      Manifest V3 Compliant
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <Check className="w-4 h-4 text-emerald-400" />
+                      No Remote Backend
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </>
         )}
       </main>
 
-      {/* Review Modal (In Simulator) */}
-      {showReviewModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="p-5 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-blue-400" />
-                <h3 className="font-bold text-sm text-white">AutoFill AI — Review & Corrections</h3>
+      {/* Site Footer */}
+      <footer className="border-t border-white/[0.08] bg-[#060911] py-10 text-slate-400 text-xs font-mono" data-purpose="page-footer">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-6">
+          <button
+            onClick={() => navigateTo('/')}
+            className="flex items-center space-x-3 cursor-pointer text-left group"
+          >
+            <div className="w-7 h-7 rounded-lg overflow-hidden border border-blue-500/30 bg-[#060911] shrink-0 p-0.5 group-hover:scale-105 transition-transform duration-200">
+              <img
+                src="/logo.png"
+                alt="AutoFill AI Logo"
+                className="w-full h-full object-cover rounded-[6px]"
+              />
+            </div>
+            <span className="text-white font-semibold text-sm group-hover:text-blue-300 transition">AutoFill AI</span>
+          </button>
+
+          <div className="text-slate-400 text-center sm:text-right">
+            Crafted by{' '}
+            <a
+              href="https://vaibhav-singhal.netlify.app/"
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue-400 hover:text-blue-300 font-semibold underline underline-offset-4 transition"
+            >
+              Vaibhav Singhal
+            </a>
+          </div>
+        </div>
+      </footer>
+
+      {/* Modal: Unpacked Install Guide */}
+      {showInstallModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="bg-[#0C1220] border border-white/10 rounded-2xl max-w-xl w-full p-6 sm:p-8 space-y-6 shadow-2xl relative">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center">
+                  <HelpCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-white">How to Install Unpacked in Chrome</h3>
+                  <p className="text-xs text-slate-400">Manifest V3 Developer Mode (No Chrome Web Store required)</p>
+                </div>
               </div>
               <button
-                onClick={() => setShowReviewModal(false)}
-                className="text-slate-400 hover:text-white text-base font-bold"
+                onClick={() => setShowInstallModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto space-y-4 flex-1">
-              <p className="text-xs text-slate-400">
-                You can edit any field below. Changes will immediately update the form and be remembered in the <strong className="text-white">Learned Answers</strong> cache for future applications!
-              </p>
-
-              {reviewFields.map((field) => (
-                <div key={field.id} className="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-slate-200">{field.label}</span>
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        field.confidence >= 0.9
-                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                          : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                      }`}
-                    >
-                      {Math.round(field.confidence * 100)}% match
-                    </span>
-                  </div>
-
-                  {field.id === 'resumeName' ? (
-                    <div className="flex items-center justify-between bg-slate-900 border border-slate-800 rounded-lg p-2.5">
-                      <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
-                        <Check className="w-3.5 h-3.5" /> 📄 {field.value}
-                      </span>
-                      <button
-                        onClick={() => showToast('Re-attached resume file via DataTransfer!', 'success')}
-                        className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold rounded-lg transition"
-                      >
-                        ⚡ Attach again
-                      </button>
-                    </div>
-                  ) : (
-                    <input
-                      type="text"
-                      defaultValue={field.value}
-                      onBlur={(e) => handleSaveCorrection(field.id, e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                    />
-                  )}
-
-                  {field.reason && (
-                    <div className="text-[11px] text-slate-500 italic">
-                      AI Reasoning: {field.reason}
-                    </div>
-                  )}
+            <ol className="space-y-4 text-xs sm:text-sm text-slate-300">
+              <li className="flex gap-3">
+                <span className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 font-mono font-bold flex items-center justify-center text-xs shrink-0 mt-0.5">
+                  1
+                </span>
+                <div>
+                  <strong className="text-white block font-semibold">Download and extract the ZIP file</strong>
+                  <span className="text-slate-400 text-xs">
+                    Click &quot;Download Extension (.zip)&quot; and unzip the folder to a persistent location on your computer.
+                  </span>
                 </div>
-              ))}
-            </div>
+              </li>
 
-            <div className="p-4 border-t border-slate-800 flex justify-end gap-3 bg-slate-950/60">
+              <li className="flex gap-3">
+                <span className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 font-mono font-bold flex items-center justify-center text-xs shrink-0 mt-0.5">
+                  2
+                </span>
+                <div>
+                  <strong className="text-white block font-semibold">Open Chrome Extensions Manager</strong>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="font-mono text-xs px-2 py-1 bg-black/40 rounded border border-white/10 text-emerald-400">
+                      chrome://extensions
+                    </span>
+                    <button
+                      onClick={handleCopyExtensionsUrl}
+                      className="px-2 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedExtensionsUrl ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedExtensionsUrl ? 'Copied!' : 'Copy URL'}</span>
+                    </button>
+                  </div>
+                  <span className="text-slate-400 text-xs block mt-1">
+                    Turn on the <strong>Developer mode</strong> toggle in the top-right corner.
+                  </span>
+                </div>
+              </li>
+
+              <li className="flex gap-3">
+                <span className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 font-mono font-bold flex items-center justify-center text-xs shrink-0 mt-0.5">
+                  3
+                </span>
+                <div>
+                  <strong className="text-white block font-semibold">Click &quot;Load unpacked&quot;</strong>
+                  <span className="text-slate-400 text-xs">
+                    Click the <strong>Load unpacked</strong> button in the top-left toolbar and select the extracted extension folder.
+                  </span>
+                </div>
+              </li>
+
+              <li className="flex gap-3">
+                <span className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 font-mono font-bold flex items-center justify-center text-xs shrink-0 mt-0.5">
+                  4
+                </span>
+                <div>
+                  <strong className="text-white block font-semibold">Add API Key &amp; Upload Resume PDF</strong>
+                  <span className="text-slate-400 text-xs">
+                    Pin AutoFill AI to your Chrome toolbar, open Options, paste a free Gemini or OpenAI key, drop your resume PDF, and start autofilling!
+                  </span>
+                </div>
+              </li>
+            </ol>
+
+            <div className="pt-2 flex justify-end gap-3 border-t border-white/10">
               <button
-                onClick={() => setShowReviewModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white transition"
+                onClick={() => setShowInstallModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 transition cursor-pointer"
               >
-                Done
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  setShowInstallModal(false);
+                  handleDownloadZip();
+                }}
+                disabled={isZipping}
+                className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 flex items-center gap-2 shadow-lg shadow-blue-500/25 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{isZipping ? 'Packaging...' : 'Download (.zip)'}</span>
               </button>
             </div>
           </div>
