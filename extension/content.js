@@ -600,8 +600,19 @@
       if (seenButtons.has(el)) continue;
       if (!isElementVisible(el)) continue;
 
+      const tag = el.tagName.toLowerCase();
+      const isButtonRole = tag === 'button' || tag === 'a' || el.getAttribute('role') === 'button' || el.hasAttribute('onclick');
+      if (!isButtonRole) {
+        try {
+          const style = window.getComputedStyle(el);
+          if (!style || style.cursor !== 'pointer') continue;
+        } catch (_) {
+          continue;
+        }
+      }
+
       const text = (el.innerText || el.getAttribute('aria-label') || el.title || '').trim();
-      if (!text || text.length > 50) continue;
+      if (!text || text.length > 70) continue;
 
       if (!ADD_BUTTON_REGEX.test(text)) continue;
       if (REMOVE_BUTTON_REGEX.test(text) || SUBMIT_BUTTON_REGEX.test(text)) continue;

@@ -278,6 +278,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
+    // Warn if file exceeds 20 MB
+    const MAX_SIZE = 20 * 1024 * 1024;
+    for (const file of validFiles) {
+      if (file.size > MAX_SIZE) {
+        showToast(`Warning: "${file.name}" is larger than 20 MB. It may exceed AI document limits.`, 'warn');
+      }
+    }
+
     uploadStatus.classList.remove('hidden');
     uploadStatusText.textContent = `Reading ${validFiles.length} file(s)...`;
 

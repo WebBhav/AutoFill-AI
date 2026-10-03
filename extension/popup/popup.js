@@ -2,7 +2,6 @@
  * AutoFill AI - Popup Script
  */
 
-import { extractTextFromPDF } from '../pdf-extractor.js';
 import { getStorageData, setStorageData, STORAGE_KEYS } from '../utils.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -60,7 +59,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    quickUploadStatus.textContent = 'Extracting PDF text...';
+    if (file.size > 20 * 1024 * 1024) {
+      quickUploadStatus.textContent = '❌ PDF exceeds 20 MB limit';
+      return;
+    }
+
+    quickUploadStatus.textContent = 'Reading PDF...';
     try {
       const arrayBuffer = await file.arrayBuffer();
 

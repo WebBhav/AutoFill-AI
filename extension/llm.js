@@ -1,7 +1,7 @@
 /**
  * AutoFill AI - LLM Integration Module
- * Supports Google Gemini (default), OpenAI, and Anthropic Claude.
- * Handles API calls, prompt construction, defensive JSON parsing, and chunking.
+ * Supports Google Gemini (native multimodal PDF), Anthropic Claude (document blocks),
+ * and OpenAI (file input or clear compatibility messaging).
  */
 
 export const DEFAULT_CONFIG = {
@@ -13,7 +13,7 @@ export const DEFAULT_CONFIG = {
 
 /**
  * Clean and defensively parse JSON from an LLM response.
- * Strips markdown code blocks and handles common edge-case formatting.
+ * Strips markdown code blocks and handles common formatting quirks.
  */
 export function parseDefensiveJSON(text) {
   if (!text || typeof text !== 'string') return null;
@@ -55,42 +55,61 @@ export function parseDefensiveJSON(text) {
 
 /**
  * Dispatch an LLM request to the selected provider.
+ * Accepts attachments: Array of { mimeType, base64 } or { mime_type, data }.
  */
-export async function callLLM({ provider, model, apiKey, systemInstruction, userPrompt, inlineFiles = [], jsonMode = false }) {
+export async function callLLM({
+  provider = 'gemini',
+  model,
+  apiKey,
+  systemInstruction,
+  userPrompt,
+  attachments = [],
+  inlineFiles = [],
+  jsonMode = false,
+}) {
   if (!apiKey) {
     throw new Error(`Missing API Key for provider: ${provider}. Please enter your key in AutoFill AI Settings.`);
   }
 
+  // Normalize attachments (support both attachments and legacy inlineFiles)
+  const normalizedAttachments = [...(attachments || []), ...(inlineFiles || [])].map(att => ({
+    name: att.name || 'document.pdf',
+    mimeType: att.mimeType || att.mime_type || att.type || 'application/pdf',
+    base64: att.base64 || att.data || '',
+  }));
+
   switch (provider) {
     case 'gemini':
-      return callGemini({ model, apiKey, systemInstruction, userPrompt, inlineFiles, jsonMode });
-    case 'openai':
-      return callOpenAI({ model, apiKey, systemInstruction, userPrompt, inlineFiles, jsonMode });
+      return callGemini({ model, apiKey, systemInstruction, userPrompt, attachments: normalizedAttachments, jsonMode });
     case 'anthropic':
-      return callAnthropic({ model, apiKey, systemInstruction, userPrompt, inlineFiles });
+      return callAnthropic({ model, apiKey, systemInstruction, userPrompt, attachments: normalizedAttachments });
+    case 'openai':
+      return callOpenAI({ model, apiKey, systemInstruction, userPrompt, attachments: normalizedAttachments, jsonMode });
     default:
       throw new Error(`Unsupported provider: ${provider}`);
   }
 }
 
 /**
- * Google Gemini API Call (Supports Multimodal PDF & Text)
+ * Google Gemini API Call (Supports Native Multimodal PDF via inline_data)
  */
-async function callGemini({ model, apiKey, systemInstruction, userPrompt, inlineFiles = [], jsonMode }) {
+async function callGemini({ model, apiKey, systemInstruction, userPrompt, attachments = [], jsonMode }) {
   const modelName = model || 'gemini-3.8-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
   const parts = [];
 
-  // Add inline multimodal files (PDFs, images, documents) directly to Gemini!
-  if (inlineFiles && Array.isArray(inlineFiles)) {
-    for (const f of inlineFiles) {
-      parts.push({
-        inlineData: {
-          mimeType: f.mimeType || 'application/pdf',
-          data: f.data || f.base64,
-        },
-      });
+  // Add native document attachments: inline_data with mime_type "application/pdf"
+  if (attachments && Array.isArray(attachments)) {
+    for (const att of attachments) {
+      if (att.base64) {
+        parts.push({
+          inline_data: {
+            mime_type: att.mimeType || 'application/pdf',
+            data: att.base64,
+          },
+        });
+      }
     }
   }
 
@@ -118,11 +137,16 @@ async function callGemini({ model, apiKey, systemInstruction, userPrompt, inline
     body.generationConfig.responseMimeType = 'application/json';
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (netErr) {
+    throw new Error(`Gemini network connection failed: ${netErr.message}`);
+  }
 
   if (!response.ok) {
     const errorBody = await response.text();
@@ -130,101 +154,53 @@ async function callGemini({ model, apiKey, systemInstruction, userPrompt, inline
     try {
       const errJson = JSON.parse(errorBody);
       if (errJson.error?.message) {
-        parsedMsg = `Gemini: ${errJson.error.message}`;
+        parsedMsg = errJson.error.message;
       }
     } catch (_) {}
-    throw new Error(parsedMsg);
+
+    if (response.status === 429) {
+      throw new Error('Rate limit reached on Gemini API. Please wait a moment or check your API quota.');
+    }
+    if (response.status === 404) {
+      throw new Error(`Gemini model "${modelName}" is not available or unsupported for your API key.`);
+    }
+    if (response.status === 400) {
+      throw new Error(`Gemini document reading error: ${parsedMsg}. The PDF may be corrupt or unreadable.`);
+    }
+    throw new Error(`Gemini error: ${parsedMsg}`);
   }
 
   const data = await response.json();
   const textOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!textOutput) {
-    throw new Error('Gemini returned an empty response. Check if content was flagged or blocked.');
+    throw new Error('Gemini returned an empty response. Check if content was flagged or if the document contains readable text.');
   }
 
   return textOutput;
 }
 
 /**
- * OpenAI API Call
+ * Anthropic Claude API Call (Supports Native Document Content Block with base64 source)
  */
-async function callOpenAI({ model, apiKey, systemInstruction, userPrompt, inlineFiles = [], jsonMode }) {
-  const modelName = model || 'gpt-4o-mini';
-  const url = 'https://api.openai.com/v1/chat/completions';
-
-  const messages = [];
-  if (systemInstruction) {
-    messages.push({ role: 'system', content: systemInstruction });
-  }
-
-  // Handle multimodal file if provided (or note that files are processed via vision/text)
-  const userContent = [{ type: 'text', text: userPrompt }];
-  if (inlineFiles && Array.isArray(inlineFiles)) {
-    for (const f of inlineFiles) {
-      if (f.mimeType?.startsWith('image/')) {
-        userContent.push({
-          type: 'image_url',
-          image_url: { url: `data:${f.mimeType};base64,${f.data || f.base64}` },
-        });
-      }
-    }
-  }
-
-  messages.push({ role: 'user', content: userContent.length === 1 ? userPrompt : userContent });
-
-  const body = {
-    model: modelName,
-    messages,
-    temperature: 0.1,
-  };
-
-  if (jsonMode) {
-    body.response_format = { type: 'json_object' };
-  }
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    let parsedMsg = `OpenAI API error (${response.status})`;
-    try {
-      const errJson = JSON.parse(errorBody);
-      if (errJson.error?.message) parsedMsg = `OpenAI: ${errJson.error.message}`;
-    } catch (_) {}
-    throw new Error(parsedMsg);
-  }
-
-  const data = await response.json();
-  return data?.choices?.[0]?.message?.content || '';
-}
-
-/**
- * Anthropic Claude API Call (Supports Native Base64 PDF Documents)
- */
-async function callAnthropic({ model, apiKey, systemInstruction, userPrompt, inlineFiles = [] }) {
+async function callAnthropic({ model, apiKey, systemInstruction, userPrompt, attachments = [] }) {
   const modelName = model || 'claude-3-5-sonnet-20241022';
   const url = 'https://api.anthropic.com/v1/messages';
 
   const userContent = [];
 
-  // Claude Native Document Support
-  if (inlineFiles && Array.isArray(inlineFiles)) {
-    for (const f of inlineFiles) {
-      userContent.push({
-        type: 'document',
-        source: {
-          type: 'base64',
-          media_type: f.mimeType || 'application/pdf',
-          data: f.data || f.base64,
-        },
-      });
+  // Claude Native Document Input: content block of type "document" with a base64 source and media_type "application/pdf"
+  if (attachments && Array.isArray(attachments)) {
+    for (const att of attachments) {
+      if (att.base64) {
+        userContent.push({
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: att.mimeType || 'application/pdf',
+            data: att.base64,
+          },
+        });
+      }
     }
   }
 
@@ -241,25 +217,40 @@ async function callAnthropic({ model, apiKey, systemInstruction, userPrompt, inl
     body.system = systemInstruction;
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'dangerously-allow-browser': 'true',
-    },
-    body: JSON.stringify(body),
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'dangerously-allow-browser': 'true',
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (netErr) {
+    throw new Error(`Anthropic network connection failed: ${netErr.message}`);
+  }
 
   if (!response.ok) {
     const errorBody = await response.text();
     let parsedMsg = `Anthropic API error (${response.status})`;
     try {
       const errJson = JSON.parse(errorBody);
-      if (errJson.error?.message) parsedMsg = `Anthropic: ${errJson.error.message}`;
+      if (errJson.error?.message) parsedMsg = errJson.error.message;
     } catch (_) {}
-    throw new Error(parsedMsg);
+
+    if (response.status === 429) {
+      throw new Error('Rate limit reached on Anthropic API. Please wait a moment or check your account limits.');
+    }
+    if (response.status === 404) {
+      throw new Error(`Anthropic model "${modelName}" not found or unsupported.`);
+    }
+    if (response.status === 400) {
+      throw new Error(`Anthropic document reading error: ${parsedMsg}`);
+    }
+    throw new Error(`Anthropic error: ${parsedMsg}`);
   }
 
   const data = await response.json();
@@ -267,32 +258,139 @@ async function callAnthropic({ model, apiKey, systemInstruction, userPrompt, inl
 }
 
 /**
+ * OpenAI API Call
+ * Sends file input part with file_data (base64) for documents, or presents a clear message
+ * for custom endpoints that do not support document inputs.
+ */
+async function callOpenAI({ model, apiKey, systemInstruction, userPrompt, attachments = [], jsonMode }) {
+  const modelName = model || 'gpt-4o-mini';
+  const url = 'https://api.openai.com/v1/chat/completions';
+
+  const messages = [];
+  if (systemInstruction) {
+    messages.push({ role: 'system', content: systemInstruction });
+  }
+
+  const userContent = [];
+
+  if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+    for (const att of attachments) {
+      if (att.base64) {
+        if (att.mimeType?.startsWith('image/')) {
+          userContent.push({
+            type: 'image_url',
+            image_url: { url: `data:${att.mimeType};base64,${att.base64}` },
+          });
+        } else {
+          // OpenAI native file input part with file_data
+          userContent.push({
+            type: 'file',
+            file: {
+              filename: att.name || 'resume.pdf',
+              file_data: att.base64,
+            },
+          });
+        }
+      }
+    }
+  }
+
+  userContent.push({ type: 'text', text: userPrompt });
+  messages.push({ role: 'user', content: userContent.length === 1 ? userPrompt : userContent });
+
+  const body = {
+    model: modelName,
+    messages,
+    temperature: 0.1,
+  };
+
+  if (jsonMode) {
+    body.response_format = { type: 'json_object' };
+  }
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (netErr) {
+    throw new Error(`OpenAI network connection failed: ${netErr.message}`);
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    let parsedMsg = `OpenAI API error (${response.status})`;
+    try {
+      const errJson = JSON.parse(errorBody);
+      if (errJson.error?.message) parsedMsg = errJson.error.message;
+    } catch (_) {}
+
+    // Check for custom OpenAI-compatible provider that cannot read PDFs
+    if (
+      parsedMsg.toLowerCase().includes('unsupported') ||
+      parsedMsg.toLowerCase().includes('file') ||
+      parsedMsg.toLowerCase().includes('document') ||
+      parsedMsg.toLowerCase().includes('invalid type')
+    ) {
+      throw new Error(
+        'This OpenAI-compatible model/endpoint does not support direct PDF document input. Please use Gemini or Claude, or enter your profile details manually in PROFILE.md.'
+      );
+    }
+
+    if (response.status === 429) {
+      throw new Error('Rate limit reached on OpenAI API. Please wait a moment or check your quota.');
+    }
+    if (response.status === 404) {
+      throw new Error(`OpenAI model "${modelName}" not found or unsupported.`);
+    }
+    throw new Error(`OpenAI error: ${parsedMsg}`);
+  }
+
+  const data = await response.json();
+  return data?.choices?.[0]?.message?.content || '';
+}
+
+/**
  * Extract data directly from uploaded PDF document(s) using the LLM's native multimodal capabilities
- * and merge immediately with existing PROFILE.md in a single step without custom text extractors.
+ * and merge faithfully into PROFILE.md in a single step without custom text extractors.
  */
 export async function extractAndMergeProfileFromPDF({ files, existingProfile = '', apiKey, provider = 'gemini', model }) {
   const fileList = Array.isArray(files) ? files : [files];
   const isMerge = Boolean(existingProfile && existingProfile.trim().length > 30);
 
-  const inlineFiles = fileList.map(f => ({
+  // Validate file sizes and warn if >20MB
+  const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
+  for (const f of fileList) {
+    if (f.size && f.size > MAX_FILE_SIZE) {
+      throw new Error(`File "${f.name || 'Document'}" is larger than 20 MB. Please upload a smaller document.`);
+    }
+  }
+
+  const attachments = fileList.map(f => ({
     name: f.name || 'Document.pdf',
     mimeType: f.mimeType || f.type || 'application/pdf',
-    data: f.base64 || f.data,
+    base64: f.base64 || f.data,
   }));
 
-  const systemInstruction = `You are an expert resume and credentials parser for a web form autofill browser extension.
-Your task is to analyze the attached document(s) directly using your multimodal vision/document intelligence, extract all personal details, contact info, employment history, education, skills, and logistics, and merge them seamlessly into a structured Markdown profile named PROFILE.md.
+  const systemInstruction = `You are an expert resume and credentials parser for an autofill browser extension.
+Your task is to analyze the attached PDF document(s) directly using your native document intelligence, and extract EVERYTHING completely and faithfully into a structured Markdown profile named PROFILE.md.
 
 CRITICAL EXTRACTION RULES:
-1. NEVER invent facts or hallucinate. Only extract what is genuinely present in the document(s).
-2. For items not mentioned in the source or existing profile, write "UNKNOWN" or leave empty as indicated.
-3. Keep the output strictly in standard Markdown format matching the template below.
-4. If an existing profile is provided, MERGE the new information into it without deleting existing accurate facts. Resolve conflicts by keeping the most recent or detailed version.
-5. Format dates clearly (e.g. YYYY-MM or Month YYYY).`;
+1. EXTRACT EVERYTHING completely and faithfully: all work history, jobs, dates, bullet points, projects, skills, links, certifications, and contact details. Do NOT summarize or omit achievements.
+2. NEVER invent facts or hallucinate. Only extract what is genuinely present in the document(s).
+3. For missing common fields not stated in the source (e.g., notice period, work authorization, expected salary, driver's license), mark them explicitly as UNKNOWN.
+4. Keep the output strictly in standard Markdown format matching the template below.
+5. If an existing profile is provided, MERGE new information into it without deleting existing accurate facts. Resolve conflicts by keeping the most recent or detailed version.
+6. Format dates clearly (e.g. YYYY-MM or Month YYYY).`;
 
   const userPrompt = `
 ${isMerge ? `EXISTING PROFILE.md TO MERGE WITH:\n\`\`\`markdown\n${existingProfile}\n\`\`\`\n\n` : ''}
-Please analyze the attached PDF document(s) directly (${fileList.map(f => f.name || 'Document').join(', ')}), extract all candidate data, and produce an updated, comprehensive PROFILE.md following this exact Markdown structure:
+Please analyze the attached PDF document(s) directly (${fileList.map(f => f.name || 'Document').join(', ')}), extract all candidate data completely without omitting details, and produce an updated, comprehensive PROFILE.md following this exact Markdown structure:
 
 # PERSONAL PROFILE
 
@@ -368,7 +466,7 @@ Output ONLY the markdown content. Do not include conversational introductory tex
     apiKey,
     systemInstruction,
     userPrompt,
-    inlineFiles,
+    attachments,
     jsonMode: false,
   });
 
@@ -376,24 +474,25 @@ Output ONLY the markdown content. Do not include conversational introductory tex
 }
 
 /**
- * Generate or merge a user profile into structured PROFILE.md from extracted PDF text.
+ * Generate or merge a user profile into structured PROFILE.md from text.
  */
 export async function generateProfileFromText({ text, existingProfile = '', apiKey, provider = 'gemini', model }) {
   const isMerge = Boolean(existingProfile && existingProfile.trim().length > 50);
 
   const systemInstruction = `You are an expert resume parsing and identity data engineer for a browser autofill extension.
-Your task is to take raw text extracted from documents (resume, CV, cover letter, ID) and generate a pristine, structured Markdown profile named PROFILE.md.
+Your task is to take raw text from documents (resume, CV, cover letter, ID) and generate a pristine, structured Markdown profile named PROFILE.md.
 
 CRITICAL RULES:
-1. NEVER invent facts or hallucinate. Only extract what is present in the text.
-2. For items not mentioned in the source, write "UNKNOWN" or leave empty as indicated.
-3. Keep the output in standard Markdown format matching the template below.
-4. If an existing profile is provided, MERGE the new information into it without deleting existing accurate facts. Resolve conflicts by keeping the most recent or detailed version.
-5. Format dates clearly (e.g. YYYY-MM or Month YYYY).`;
+1. Extract all facts completely and faithfully. Do NOT summarize or omit details.
+2. NEVER invent facts or hallucinate. Only extract what is present in the text.
+3. For items not mentioned in the source (notice period, work authorization, expected salary), write UNKNOWN.
+4. Keep the output in standard Markdown format matching the template below.
+5. If an existing profile is provided, MERGE the new information without deleting accurate existing facts.
+6. Format dates clearly (e.g. YYYY-MM or Month YYYY).`;
 
   const userPrompt = `
 ${isMerge ? `EXISTING PROFILE.md TO MERGE WITH:\n\`\`\`markdown\n${existingProfile}\n\`\`\`\n\n` : ''}
-NEW RAW EXTRACTED DOCUMENT TEXT:
+RAW DOCUMENT TEXT:
 """
 ${text}
 """
@@ -466,8 +565,7 @@ Please produce a comprehensive PROFILE.md following this exact Markdown structur
 - Veteran status: (UNKNOWN)
 - Disability status: (Decline to state / UNKNOWN)
 
-Output ONLY the markdown content. Do not include introductory conversational commentary.
-`;
+Output ONLY the markdown content. Do not include introductory commentary.`;
 
   const output = await callLLM({
     provider,
@@ -483,7 +581,6 @@ Output ONLY the markdown content. Do not include introductory conversational com
 
 /**
  * Match form fields with PROFILE.md in batched requests.
- * Breaks requests into batches of max 50 fields to prevent context exhaustion and latency.
  */
 export async function matchFieldsWithProfile({ fields, profile, learnedAnswers = {}, pageContext = {}, apiKey, provider = 'gemini', model }) {
   if (!fields || fields.length === 0) return [];
@@ -554,16 +651,15 @@ STRICT RULES:
    - 0.75 - 0.9: Close inferred match or tailored answer.
    - 0.5 - 0.7: Partial match or educated choice among constrained options.
    - 0.0: Unknown / null.
-8. NEVER fill passwords, credit cards, CVVs, or OTP verification codes. (These should already be filtered, but if seen, return null).
+8. NEVER fill passwords, credit cards, CVVs, or OTP verification codes. (Return null).
 9. For file upload fields (type: 'file'):
-   - Classify the target document request based on the label, name, and nearby context into EXACTLY one category:
+   - Classify the target document request based on label, name, and nearby context into:
      - "resume" (Resume, CV, Curriculum Vitae, Work History)
      - "cover_letter" (Cover Letter, Motivation Letter, Statement of Purpose)
-     - "other_document" (Portfolio, Transcripts, Certifications, Writing Sample, Documents)
+     - "other_document" (Portfolio, Transcripts, Certifications, Writing Sample)
      - "photo" (Profile Picture, Headshot, Avatar, Photograph)
-   - If the label is ambiguous or generic (e.g. "Upload Document", "Attachment", "Upload File"), default to "resume".
-   - Return "value": "resume" | "cover_letter" | "other_document" | "photo" (or null if irrelevant).
-   - Set confidence to 0.95 for specific matches, 0.7 for defaulted attachments.`;
+   - Default ambiguous upload fields to "resume".
+   - Return "value": "resume" | "cover_letter" | "other_document" | "photo" (or null).`;
 
   const userPrompt = `
 PAGE CONTEXT:
@@ -607,7 +703,7 @@ Produce a JSON array of autofill decisions for all ${batch.length} field IDs.`;
  * Plan repeatable sections (e.g. "+ Add website", "+ Add experience", "+ Add skill")
  * Determines how many items to add based on profile data minus what's already on the page.
  */
-export async function planRepeatableSections({ sections, profile, apiKey, provider, model }) {
+export async function planRepeatableSections({ sections, profile, apiKey, provider = 'gemini', model }) {
   if (!sections || sections.length === 0) return [];
   if (!apiKey || !profile) return [];
 
@@ -631,6 +727,7 @@ STRICT RULES:
         // For education: {"school": "...", "degree": "...", "field": "...", "gradYear": "..."}
         // For experience: {"company": "...", "title": "...", "startDate": "...", "endDate": "...", "description": "..."}
         // For language: {"language": "English", "proficiency": "Native"}
+        // For certifications: {"certification": "AWS Certified", "issuer": "Amazon"}
       }
     ],
     "reason": "Brief explanation of how many items exist in profile vs already on page"

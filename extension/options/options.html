@@ -151,6 +151,9 @@
             <div class="drop-icon">📁</div>
             <h3>Drag & drop your Resume or Document PDFs here</h3>
             <p>Click to browse or drop files (PDF, DOC, DOCX). Stored locally in browser.</p>
+            <p class="hint-text" style="margin-top: 8px; font-size: 11px; color: var(--text-secondary);">
+              🔒 <strong>Privacy:</strong> Your PDF is sent to your chosen AI provider once to build your profile. It is stored only on your device.
+            </p>
             <input type="file" id="pdf-file-picker" accept=".pdf,.doc,.docx" class="hidden-input" multiple />
           </div>
 
@@ -274,8 +277,6 @@
     </div>
   </div>
 
-  <!-- PDF.js library bundled -->
-  <script src="../lib/pdf.min.js"></script>
   <script type="module" src="options.js"></script>
 </body>
 </html>

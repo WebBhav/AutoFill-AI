@@ -50,7 +50,6 @@ async function triggerAutofillInTab(tabId) {
   try {
     await chrome.tabs.sendMessage(tabId, { action: 'TRIGGER_AUTOFILL' });
   } catch (err) {
-    // Content script might not be injected yet on this tab, inject and retry
     console.warn('[AutoFill AI] Content script not responding, attempting injection...', err);
     try {
       await chrome.scripting.insertCSS({
@@ -61,7 +60,6 @@ async function triggerAutofillInTab(tabId) {
         target: { tabId },
         files: ['content.js'],
       });
-      // Retry sending message
       await chrome.tabs.sendMessage(tabId, { action: 'TRIGGER_AUTOFILL' });
     } catch (injectErr) {
       console.error('[AutoFill AI] Failed to inject content script:', injectErr);
@@ -90,7 +88,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           sendResponse({ success: false, error: err.message });
         }
       })();
-      return true; // Keep message channel open for async response
+      return true;
     }
 
     case 'ACTION_GENERATE_PROFILE': {
@@ -130,7 +128,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             model,
           });
 
-          // Save new profile
           await setStorageData({ [STORAGE_KEYS.PROFILE_MD]: profileMd });
           sendResponse({ success: true, profileMd });
         } catch (err) {
@@ -170,6 +167,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             return;
           }
 
+          // Check file sizes (20MB limit)
+          const MAX_SIZE = 20 * 1024 * 1024;
+          const fileList = Array.isArray(files) ? files : [files];
+          for (const f of fileList) {
+            if (f && f.size && f.size > MAX_SIZE) {
+              sendResponse({
+                success: false,
+                error: `File "${f.name || 'PDF'}" exceeds the 20 MB limit. Please use a smaller or compressed document.`,
+              });
+              return;
+            }
+          }
+
           const profileMd = await extractAndMergeProfileFromPDF({
             files,
             existingProfile,
@@ -178,7 +188,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             model,
           });
 
-          // Save new profile
           await setStorageData({ [STORAGE_KEYS.PROFILE_MD]: profileMd });
           sendResponse({ success: true, profileMd });
         } catch (err) {
