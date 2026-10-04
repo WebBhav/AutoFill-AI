@@ -1,4 +1,12 @@
 /**
+ * TEST CHECKLIST:
+ * - On a page with a header nav and a form, running fill never changes the URL.
+ * - Nav, menu and footer links are never clicked.
+ * - "+ Add website" inside the form still works.
+ * - A button like "Submit application" is never clicked.
+ */
+
+/**
  * AutoFill AI - Content Script (Enhanced)
  * Scans page DOM (including Shadow DOM, custom ARIA comboboxes, dropzones & portals),
  * groups radios & multi-select checkboxes, matches native & custom dropdowns reliably,
@@ -21,7 +29,23 @@
   let cachedStoredFiles = [];
   let cachedFallbackResume = null;
   let cachedAutoAttachSetting = true;
+  let cachedAutoClickAddButtons = true;
   let activeRepeatableFailures = []; // Failures to reveal repeatable rows
+
+  // Navigation protection & run execution state
+  let isRunAborted = false;
+  let abortReason = null;
+  let addMoreClicksCount = 0;
+  const MAX_ADD_MORE_CLICKS = 15;
+  let runTimeoutDeadline = 0;
+  let hasUnloadTriggered = false;
+  let currentFormContainer = null;
+  let currentDetectedFieldElements = [];
+
+  const handleBeforeUnload = () => {
+    hasUnloadTriggered = true;
+    abortRunImmediately('Navigation was initiated');
+  };
 
   // Listen for trigger messages from background (popup, context menu, or keyboard shortcut)
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -35,79 +59,529 @@
 
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+  // =========================================================================
+  // CENTRAL SAFE CLICK & NAVIGATION PROTECTION ENGINE
+  // =========================================================================
+
+  function computeFormContainer(candidateElements) {
+    if (!candidateElements || candidateElements.length === 0) {
+      const forms = Array.from(document.querySelectorAll('form'));
+      if (forms.length === 1) return forms[0];
+      if (forms.length > 1) {
+        let maxInputs = 0;
+        let bestForm = forms[0];
+        for (const f of forms) {
+          const count = f.querySelectorAll('input:not([type="hidden"]), select, textarea').length;
+          if (count > maxInputs) {
+            maxInputs = count;
+            bestForm = f;
+          }
+        }
+        return bestForm;
+      }
+      const mainEl = document.querySelector('main, [role="main"], [id*="application"], [class*="application"], [id*="job"], [class*="job"]');
+      return mainEl || document.body;
+    }
+
+    // 1. Check if elements belong to a <form>
+    const formCounts = new Map();
+    for (const el of candidateElements) {
+      const f = el.closest('form');
+      if (f) {
+        formCounts.set(f, (formCounts.get(f) || 0) + 1);
+      }
+    }
+
+    if (formCounts.size > 0) {
+      let bestForm = null;
+      let maxCount = 0;
+      for (const [form, count] of formCounts.entries()) {
+        if (count > maxCount) {
+          maxCount = count;
+          bestForm = form;
+        }
+      }
+      return bestForm;
+    }
+
+    // 2. No <form> found: compute closest common ancestor of detected fields
+    if (candidateElements.length === 1) {
+      return candidateElements[0].closest('section, [class*="section"], [class*="container"], [class*="form"]') || candidateElements[0].parentElement;
+    }
+
+    let lca = candidateElements[0].parentElement;
+    for (let i = 1; i < candidateElements.length; i++) {
+      lca = findLowestCommonAncestor(lca, candidateElements[i]);
+      if (!lca || lca === document.body || lca === document.documentElement) break;
+    }
+
+    if (!lca || lca === document.body || lca === document.documentElement) {
+      const main = document.querySelector('main, [role="main"], [id*="application"], [class*="application"]');
+      if (main) return main;
+      return candidateElements[0].closest('section, [class*="section"], [class*="container"]') || candidateElements[0].parentElement || document.body;
+    }
+
+    return lca;
+  }
+
+  function findLowestCommonAncestor(nodeA, nodeB) {
+    if (!nodeA || !nodeB) return null;
+    const ancestors = new Set();
+    let curr = nodeA;
+    while (curr) {
+      ancestors.add(curr);
+      curr = curr.parentElement;
+    }
+    curr = nodeB;
+    while (curr) {
+      if (ancestors.has(curr)) return curr;
+      curr = curr.parentElement;
+    }
+    return null;
+  }
+
+  function getActiveFormContainer() {
+    if (currentFormContainer && currentFormContainer.isConnected) {
+      return currentFormContainer;
+    }
+    currentFormContainer = computeFormContainer(currentDetectedFieldElements);
+    return currentFormContainer;
+  }
+
+  function isExcludedNavigationOrHeader(el, reason) {
+    if (!el || el === document.body || el === document.documentElement) return true;
+
+    // Header, nav, footer, aside, [role=navigation], [role=banner], [role=menubar] are strictly excluded
+    if (el.closest('header, nav, footer, aside, [role="navigation"], [role="banner"], [role="menubar"]')) {
+      return true;
+    }
+
+    // Check ancestors for nav, menu, header, footer, sidebar in class or id
+    let curr = el;
+    while (curr && curr !== document.body && curr !== document.documentElement) {
+      const id = (curr.id || '').toLowerCase();
+      const className = typeof curr.className === 'string' ? curr.className.toLowerCase() : '';
+
+      if (
+        id.includes('nav') || className.includes('nav') ||
+        id.includes('header') || className.includes('header') ||
+        id.includes('footer') || className.includes('footer') ||
+        id.includes('sidebar') || className.includes('sidebar')
+      ) {
+        return true;
+      }
+
+      // Check menu (allow only if it's a dropdown option / listbox item)
+      const isDropdownContext = (reason === 'dropdown-option' || reason === 'custom-dropdown-portal-click' || reason === 'dropdown-trigger');
+      if (!isDropdownContext && (id.includes('menu') || className.includes('menu'))) {
+        return true;
+      }
+
+      curr = curr.parentElement;
+    }
+
+    return false;
+  }
+
+  const FORBIDDEN_TEXT_REGEX = /\b(submit|apply|send|next|continue|login|sign in|sign up|register|pay|buy|checkout|delete|remove|cancel)\b/i;
+
+  function isForbiddenAnchorOrSubmit(el) {
+    if (!el) return true;
+
+    // 1. Check <a> with real href (anything other than empty, "#", or "javascript:void(0)")
+    const anchor = el.tagName.toLowerCase() === 'a' ? el : el.closest('a');
+    if (anchor) {
+      const href = (anchor.getAttribute('href') || '').trim();
+      if (href && href !== '#' && !href.startsWith('#') && !href.startsWith('javascript:void(0)') && !href.startsWith('javascript:;')) {
+        return true;
+      }
+    }
+
+    // 2. Submit controls
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    if ((tag === 'button' || tag === 'input') && type === 'submit') {
+      return true;
+    }
+
+    // 3. Text matching submit, apply, send, next, continue, login, sign in, sign up, register, pay, buy, checkout, delete, remove, cancel
+    const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.title || '').trim().toLowerCase();
+    if (FORBIDDEN_TEXT_REGEX.test(text)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function isVisibleEnabledAndNonZero(el) {
+    if (!el || !el.isConnected) return false;
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity || '1') <= 0) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function isNearDetectedField(el, detectedFieldElements) {
+    if (!el || !detectedFieldElements || detectedFieldElements.length === 0) return false;
+
+    if (detectedFieldElements.some(f => f === el || f.contains(el) || el.contains(f))) {
+      return true;
+    }
+
+    const section = el.closest('fieldset, section, [class*="section"], [class*="group"], [class*="card"], form');
+    if (section && detectedFieldElements.some(f => section.contains(f))) {
+      return true;
+    }
+
+    const elRect = el.getBoundingClientRect();
+    const elCenterY = elRect.top + elRect.height / 2;
+
+    for (const f of detectedFieldElements) {
+      if (!f.isConnected) continue;
+      const fRect = f.getBoundingClientRect();
+      const fCenterY = fRect.top + fRect.height / 2;
+      if (Math.abs(elCenterY - fCenterY) <= 600) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function isElementBelongingToDetectedFields(el) {
+    if (!el) return false;
+    for (const entry of activeFieldMap.values()) {
+      if (entry.element === el) return true;
+      if (entry.elements && entry.elements.includes(el)) return true;
+      if (entry.dropZone === el) return true;
+      if (entry.element && entry.element.id && el.getAttribute('for') === entry.element.id) return true;
+      if (entry.element && (entry.element.contains(el) || el.contains(entry.element))) return true;
+      if (entry.descriptor?.options) {
+        for (const opt of entry.descriptor.options) {
+          if (opt.element === el || opt.labelElement === el) return true;
+        }
+      }
+    }
+    if (currentDetectedFieldElements.some(f => f === el || f.contains(el) || el.contains(f))) {
+      return true;
+    }
+    return false;
+  }
+
+  function countCurrentFormFields() {
+    const container = getActiveFormContainer();
+    const searchRoot = container || document;
+    return searchRoot.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]').length;
+  }
+
+  function renderRunningBadge(statusText) {
+    if (floatingBadgeEl) floatingBadgeEl.remove();
+
+    const badge = document.createElement('div');
+    badge.id = 'autofill-ai-floating-badge';
+    badge.className = 'autofill-badge-running';
+
+    badge.innerHTML = `
+      <div class="autofill-badge-logo">AI</div>
+      <div class="autofill-badge-text">
+        <span class="autofill-status-pulse" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#38bdf8;margin-right:6px;"></span>
+        <span class="autofill-status-message">${escapeHtml(statusText)}</span>
+      </div>
+      <button class="autofill-btn-stop" id="autofill-trigger-stop" title="Cancel form filling immediately">Stop</button>
+      <button class="autofill-btn-close" id="autofill-trigger-close">✕</button>
+    `;
+
+    document.body.appendChild(badge);
+    floatingBadgeEl = badge;
+
+    badge.querySelector('#autofill-trigger-stop')?.addEventListener('click', () => {
+      abortRunImmediately('Stopped by user');
+    });
+    badge.querySelector('#autofill-trigger-close')?.addEventListener('click', () => {
+      badge.remove();
+      floatingBadgeEl = null;
+    });
+  }
+
+  function abortRunImmediately(reason) {
+    isRunAborted = true;
+    abortReason = reason;
+    console.warn(`[AutoFill AI] Autofill run stopped: ${reason}`);
+    showToast(reason, 'warn');
+
+    if (floatingBadgeEl) {
+      const msgEl = floatingBadgeEl.querySelector('.autofill-status-message') || floatingBadgeEl.querySelector('.autofill-badge-text');
+      if (msgEl) {
+        msgEl.innerHTML = `<span style="color:#f87171;font-weight:700;">⚠️ ${escapeHtml(reason)}</span>`;
+      }
+      const stopBtn = floatingBadgeEl.querySelector('#autofill-trigger-stop');
+      if (stopBtn) stopBtn.remove();
+    }
+  }
+
+  const STRICT_ADD_BUTTON_REGEX = /^\s*\+?\s*(add|add another|add more|add new)\b.*(website|link|url|portfolio|experience|education|skill|language|certification|project|another|more)?/i;
+
+  /**
+   * Central safeClick function: ALL extension clicks MUST go through this.
+   */
+  async function safeClick(element, reason) {
+    const elText = (element?.innerText || element?.value || element?.getAttribute('aria-label') || '').trim();
+    const tag = element?.tagName?.toLowerCase() || 'unknown';
+    const section = element?.closest('section, fieldset, form, [class*="section"]')?.tagName || 'unknown';
+
+    // 1. Element presence and connection
+    if (!element || !element.isConnected) {
+      console.warn(`[AutoFill AI] [safeClick BLOCKED] Element not connected in DOM. Reason: "${reason}"`);
+      console.debug('[AutoFill AI] safeClick result:', { allowed: false, reason, tag, text: elText, section, cause: 'disconnected' });
+      return false;
+    }
+
+    // 2. Abort status or 60s run timeout
+    if (isRunAborted || (runTimeoutDeadline > 0 && Date.now() > runTimeoutDeadline)) {
+      if (!isRunAborted && Date.now() > runTimeoutDeadline) {
+        abortRunImmediately('Total run timeout of 60s exceeded');
+      }
+      console.warn(`[AutoFill AI] [safeClick BLOCKED] Run aborted or timed out. Reason: "${reason}"`);
+      console.debug('[AutoFill AI] safeClick result:', { allowed: false, reason, tag, text: elText, section, cause: 'aborted-or-timeout' });
+      return false;
+    }
+
+    // 3. Form container check: element must be inside the same form / form container (except portal dropdown options)
+    const isDropdownOption = (reason === 'dropdown-option' || reason === 'custom-dropdown-portal-click');
+    if (!isDropdownOption) {
+      const formContainer = getActiveFormContainer();
+      if (formContainer && !formContainer.contains(element)) {
+        console.warn(`[AutoFill AI] [safeClick BLOCKED] Element outside active form container:`, element, reason);
+        console.debug('[AutoFill AI] safeClick result:', { allowed: false, reason, tag, text: elText, section, cause: 'outside-form-container' });
+        return false;
+      }
+    }
+
+    // 4. Header / nav / footer / aside / sidebar / menu exclusion
+    if (isExcludedNavigationOrHeader(element, reason)) {
+      console.warn(`[AutoFill AI] [safeClick BLOCKED] Element inside header/nav/footer/sidebar/menu:`, element, reason);
+      console.debug('[AutoFill AI] safeClick result:', { allowed: false, reason, tag, text: elText, section, cause: 'in-excluded-nav-header' });
+      return false;
+    }
+
+    // 5. Forbidden anchor with real href or submit / action button
+    if (isForbiddenAnchorOrSubmit(element)) {
+      console.warn(`[AutoFill AI] [safeClick BLOCKED] Element is anchor with real href or forbidden submit/action button:`, element, reason);
+      console.debug('[AutoFill AI] safeClick result:', { allowed: false, reason, tag, text: elText, section, cause: 'forbidden-anchor-or-submit' });
+      return false;
+    }
+
+    // 6. Visible, enabled, non-zero size
+    if (!isVisibleEnabledAndNonZero(element)) {
+      console.warn(`[AutoFill AI] [safeClick BLOCKED] Element is hidden, disabled, or zero-sized:`, element, reason);
+      console.debug('[AutoFill AI] safeClick result:', { allowed: false, reason, tag, text: elText, section, cause: 'hidden-or-zero-size' });
+      return false;
+    }
+
+    // 7. For "add more" buttons only: strict regex allowlist and text under 40 chars
+    if (reason === 'repeatable-add-more') {
+      if (addMoreClicksCount >= MAX_ADD_MORE_CLICKS) {
+        console.warn(`[AutoFill AI] [safeClick BLOCKED] Reached hard limit of 15 "add more" clicks.`);
+        console.debug('[AutoFill AI] safeClick result:', { allowed: false, reason, tag, text: elText, section, cause: 'max-add-more-limit' });
+        return false;
+      }
+      if (!elText || elText.length >= 40 || !STRICT_ADD_BUTTON_REGEX.test(elText)) {
+        console.warn(`[AutoFill AI] [safeClick BLOCKED] "Add more" text "${elText}" does not match strict allowlist.`);
+        console.debug('[AutoFill AI] safeClick result:', { allowed: false, reason, tag, text: elText, section, cause: 'strict-regex-mismatch' });
+        return false;
+      }
+    }
+
+    // 8. Distance check: within 600px vertically of a detected field or in same section
+    if (currentDetectedFieldElements.length > 0 && !isNearDetectedField(element, currentDetectedFieldElements)) {
+      console.warn(`[AutoFill AI] [safeClick BLOCKED] Element is not within 600px of detected fields or in same section:`, element, reason);
+      console.debug('[AutoFill AI] safeClick result:', { allowed: false, reason, tag, text: elText, section, cause: 'distance-exceeded' });
+      return false;
+    }
+
+    // 9. Dropdown triggers, radios, checkboxes must belong to detected form fields
+    if (reason === 'radio-click' || reason === 'checkbox-click' || reason === 'dropdown-trigger') {
+      if (!isElementBelongingToDetectedFields(element)) {
+        console.warn(`[AutoFill AI] [safeClick BLOCKED] Element does not belong to any detected form field:`, element, reason);
+        console.debug('[AutoFill AI] safeClick result:', { allowed: false, reason, tag, text: elText, section, cause: 'unregistered-field-click' });
+        return false;
+      }
+    }
+
+    // Log ALLOWED click
+    console.debug('[AutoFill AI] safeClick ALLOWED:', { allowed: true, reason, tag, text: elText, section });
+
+    // Navigation protection: Save state before click
+    const preClickHref = window.location.href;
+    const preFieldCount = countCurrentFormFields();
+
+    if (reason === 'repeatable-add-more') {
+      addMoreClicksCount++;
+    }
+
+    // Prevent link default navigation guard
+    const preventLinkDefault = (e) => {
+      const anchor = e.target.closest('a');
+      if (anchor) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('click', preventLinkDefault, { capture: true, once: true });
+
+    // Dispatch click events
+    try {
+      element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (_) {}
+
+    const rect = element.getBoundingClientRect ? element.getBoundingClientRect() : { left: 0, top: 0 };
+    const eventInit = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: rect.left + 5,
+      clientY: rect.top + 5,
+      button: 0,
+    };
+    try { element.focus(); } catch (_) {}
+    element.dispatchEvent(new MouseEvent('mousedown', eventInit));
+    element.dispatchEvent(new MouseEvent('mouseup', eventInit));
+    element.dispatchEvent(new MouseEvent('click', eventInit));
+
+    window.removeEventListener('click', preventLinkDefault, { capture: true });
+
+    // Wait 300ms after click and check for navigation
+    await sleep(300);
+
+    const postClickHref = window.location.href;
+    const postFieldCount = countCurrentFormFields();
+    const urlChanged = postClickHref !== preClickHref;
+    const newPageLoading = document.readyState === 'loading';
+    const fieldsDisappeared = preFieldCount > 0 && postFieldCount === 0;
+
+    if (urlChanged || newPageLoading || fieldsDisappeared || hasUnloadTriggered) {
+      const whatWasClicked = elText ? `"${elText}"` : `<${tag}>`;
+      const abortMsg = `Stopped: a click caused navigation (${whatWasClicked})`;
+      console.warn(`[AutoFill AI] ${abortMsg}`);
+      abortRunImmediately(abortMsg);
+      return false;
+    }
+
+    return true;
+  }
+
   /**
    * Main Autofill Pipeline
    */
   async function executeAutofillProcess() {
-    showToast('AutoFill AI: Scanning form fields & repeatable sections...', 'info');
+    // 0. Reset run execution state & attach navigation protection
+    isRunAborted = false;
+    abortReason = null;
+    addMoreClicksCount = 0;
+    hasUnloadTriggered = false;
+    runTimeoutDeadline = Date.now() + 60000; // 60s hard timeout
+    currentFormContainer = null;
+    currentDetectedFieldElements = [];
 
-    // 1. Fetch storage data (Learned answers, stored documents, settings)
-    const storage = await new Promise(resolve => {
-      chrome.storage.local.get([
-        'autofill_learned_answers',
-        'autofill_resume_file',
-        'autofill_stored_files',
-        'autofill_auto_attach_resume',
-      ], resolve);
-    });
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    renderRunningBadge('Scanning form fields & repeatable sections...');
 
-    const learnedAnswers = storage?.autofill_learned_answers || {};
-    cachedFallbackResume = storage?.autofill_resume_file || null;
-    cachedStoredFiles = storage?.autofill_stored_files || [];
-    cachedAutoAttachSetting = storage?.autofill_auto_attach_resume !== false;
-    activeRepeatableFailures = [];
+    try {
+      showToast('AutoFill AI: Scanning form fields & repeatable sections...', 'info');
 
-    // 2. Detect & Plan Repeatable Sections (e.g. "+ Add website", "+ Add experience", "+ Add skill")
-    const repeatableSections = detectRepeatableSections(document);
-    if (repeatableSections.length > 0) {
-      console.debug(`[AutoFill AI] Detected ${repeatableSections.length} repeatable section(s):`, repeatableSections);
-      showToast(`AutoFill AI: Planning ${repeatableSections.length} repeatable section(s)...`, 'info');
-
-      const repeatableSectionsMap = new Map();
-      repeatableSections.forEach(s => repeatableSectionsMap.set(s.sectionId, s));
-
-      const planResponse = await new Promise(resolve => {
-        chrome.runtime.sendMessage(
-          {
-            action: 'ACTION_PLAN_REPEATABLE_SECTIONS',
-            sections: repeatableSections.map(s => ({
-              sectionId: s.sectionId,
-              sectionLabel: s.sectionLabel,
-              buttonText: s.buttonText,
-              existingCount: s.existingCount,
-              existingValues: s.existingValues,
-            })),
-          },
-          resolve
-        );
+      // 1. Fetch storage data (Learned answers, stored documents, settings)
+      const storage = await new Promise(resolve => {
+        chrome.storage.local.get([
+          'autofill_learned_answers',
+          'autofill_resume_file',
+          'autofill_stored_files',
+          'autofill_auto_attach_resume',
+          'autofill_auto_click_add_buttons',
+        ], resolve);
       });
 
-      if (planResponse && planResponse.success && Array.isArray(planResponse.plans)) {
-        const failures = await executeRepeatableSections(planResponse.plans, repeatableSectionsMap);
-        activeRepeatableFailures.push(...failures);
+      const learnedAnswers = storage?.autofill_learned_answers || {};
+      cachedFallbackResume = storage?.autofill_resume_file || null;
+      cachedStoredFiles = storage?.autofill_stored_files || [];
+      cachedAutoAttachSetting = storage?.autofill_auto_attach_resume !== false;
+      cachedAutoClickAddButtons = storage?.autofill_auto_click_add_buttons !== false;
+      activeRepeatableFailures = [];
+
+      // Find form fields and determine form container BEFORE repeatable sections
+      const initialCandidateElements = collectAllCandidateElements(document);
+      currentFormContainer = computeFormContainer(initialCandidateElements);
+      currentDetectedFieldElements = initialCandidateElements.filter(el => isElementVisible(el));
+
+      // 2. Detect & Plan Repeatable Sections (ONLY inside the active form container)
+      if (cachedAutoClickAddButtons) {
+        const repeatableSections = detectRepeatableSections(currentFormContainer);
+        if (repeatableSections.length > 0 && !isRunAborted) {
+          console.debug(`[AutoFill AI] Detected ${repeatableSections.length} repeatable section(s):`, repeatableSections);
+          updateFloatingBadgeProgress(`Planning ${repeatableSections.length} repeatable section(s)...`);
+
+          const repeatableSectionsMap = new Map();
+          repeatableSections.forEach(s => repeatableSectionsMap.set(s.sectionId, s));
+
+          const planResponse = await new Promise(resolve => {
+            chrome.runtime.sendMessage(
+              {
+                action: 'ACTION_PLAN_REPEATABLE_SECTIONS',
+                sections: repeatableSections.map(s => ({
+                  sectionId: s.sectionId,
+                  sectionLabel: s.sectionLabel,
+                  buttonText: s.buttonText,
+                  existingCount: s.existingCount,
+                  existingValues: s.existingValues,
+                })),
+              },
+              resolve
+            );
+          });
+
+          if (planResponse && planResponse.success && Array.isArray(planResponse.plans) && !isRunAborted) {
+            const failures = await executeRepeatableSections(planResponse.plans, repeatableSectionsMap);
+            activeRepeatableFailures.push(...failures);
+          }
+        }
       }
-    }
 
-    // 3. Scan and collect fillable field descriptors (including newly revealed repeatable inputs & drop zones)
-    const descriptors = scanAndGroupFields(document);
-    activeFieldMap.clear();
+      if (isRunAborted) {
+        renderFloatingBadge(0, 0, 0, 0, null, activeRepeatableFailures, abortReason);
+        return { success: false, stopped: true, error: abortReason };
+      }
 
-    for (const desc of descriptors) {
-      activeFieldMap.set(desc.id, {
-        descriptor: desc,
-        element: desc.element,
-        elements: desc.elements || (desc.element ? [desc.element] : []),
-        dropZone: desc.dropZoneElement || null,
-        originalValue: desc.currentValue,
-        filledValue: desc.currentValue || null,
-        confidence: desc.currentValue ? 0.95 : 0,
-        reason: '',
-        status: 'pending', // 'success' | 'failed' | 'skipped'
-        methodUsed: '',
-        errorMessage: null,
-        attachedFileName: null,
-      });
-    }
+      // 3. Scan and collect fillable field descriptors (including newly revealed repeatable inputs & drop zones)
+      updateFloatingBadgeProgress('Scanning fillable fields...');
+      const descriptors = scanAndGroupFields(currentFormContainer || document);
+      activeFieldMap.clear();
+      currentDetectedFieldElements = [];
+
+      for (const desc of descriptors) {
+        if (desc.element) currentDetectedFieldElements.push(desc.element);
+        if (desc.elements) currentDetectedFieldElements.push(...desc.elements);
+        if (desc.dropZoneElement) currentDetectedFieldElements.push(desc.dropZoneElement);
+
+        activeFieldMap.set(desc.id, {
+          descriptor: desc,
+          element: desc.element,
+          elements: desc.elements || (desc.element ? [desc.element] : []),
+          dropZone: desc.dropZoneElement || null,
+          originalValue: desc.currentValue,
+          filledValue: desc.currentValue || null,
+          confidence: desc.currentValue ? 0.95 : 0,
+          reason: '',
+          status: 'pending', // 'success' | 'failed' | 'skipped'
+          methodUsed: '',
+          errorMessage: null,
+          attachedFileName: null,
+        });
+      }
 
     if (descriptors.length === 0) {
       showToast('No fillable form fields detected on this page.', 'warn');
@@ -191,8 +665,17 @@
     const undoSnapshot = [];
 
     for (const match of allMatches) {
+      if (isRunAborted) {
+        console.warn('[AutoFill AI] Form fill run halted:', abortReason);
+        break;
+      }
+
+      // STRICT LLM PROTECTION: Only fill fields that the extension itself detected and numbered
       const fieldEntry = activeFieldMap.get(match.id);
-      if (!fieldEntry) continue;
+      if (!fieldEntry) {
+        console.debug('[AutoFill AI] Skipping unmapped LLM match id:', match.id);
+        continue;
+      }
 
       fieldEntry.confidence = match.confidence || 0;
       fieldEntry.reason = match.reason || '';
@@ -311,18 +794,33 @@
     }
 
     const totalFailed = failedCount + activeRepeatableFailures.length;
-    renderFloatingBadge(filledCount, descriptors.length, totalFailed, filesAttachedCount, lastFileUploadStatus, activeRepeatableFailures);
-    if (totalFailed > 0) {
+    renderFloatingBadge(filledCount, descriptors.length, totalFailed, filesAttachedCount, lastFileUploadStatus, activeRepeatableFailures, abortReason);
+    if (isRunAborted) {
+      showToast(abortReason || 'Autofill stopped.', 'warn');
+    } else if (totalFailed > 0) {
       showToast(`AutoFill AI: Filled ${filledCount}/${descriptors.length} fields (${totalFailed} need review)`, 'warn');
     } else {
       showToast(`AutoFill AI: Filled ${filledCount} of ${descriptors.length} fields!`, 'success');
     }
 
     // 6. Setup dynamic mutation observer for single-page multi-step forms
-    setupStepObserver();
+    if (!isRunAborted) {
+      setupStepObserver();
+    }
 
-    return { success: true, filled: filledCount, total: descriptors.length, failed: failedCount, filesAttached: filesAttachedCount };
+    return {
+      success: !isRunAborted,
+      stopped: isRunAborted,
+      error: abortReason || null,
+      filled: filledCount,
+      total: descriptors.length,
+      failed: failedCount,
+      filesAttached: filesAttachedCount,
+    };
+  } finally {
+    window.removeEventListener('beforeunload', handleBeforeUnload);
   }
+}
 
   /**
    * Handle File Upload Field Auto-Attachment
@@ -588,8 +1086,12 @@
    * Detect all repeatable "+ Add ..." buttons and identify their respective sections
    */
   function detectRepeatableSections(rootNode) {
+    const container = rootNode || getActiveFormContainer() || document.body;
+
+    // Strict button query: only real button elements inside the active form container
+    // NEVER query broad "a", "div", or "span" tags
     const candidateButtons = Array.from(
-      rootNode.querySelectorAll('button, a, [role="button"], [data-automation-id*="add"], [data-testid*="add"], div, span')
+      container.querySelectorAll('button, [role="button"], [data-automation-id*="add"], [data-testid*="add"]')
     );
 
     const sections = [];
@@ -600,22 +1102,25 @@
       if (seenButtons.has(el)) continue;
       if (!isElementVisible(el)) continue;
 
-      const tag = el.tagName.toLowerCase();
-      const isButtonRole = tag === 'button' || tag === 'a' || el.getAttribute('role') === 'button' || el.hasAttribute('onclick');
-      if (!isButtonRole) {
-        try {
-          const style = window.getComputedStyle(el);
-          if (!style || style.cursor !== 'pointer') continue;
-        } catch (_) {
-          continue;
-        }
-      }
+      // 1. Must NOT be inside header, nav, footer, aside, [role=navigation], etc.
+      if (isExcludedNavigationOrHeader(el, 'repeatable-add-more')) continue;
 
+      // 2. Must NOT be an <a> with real href or a submit/forbidden button
+      if (isForbiddenAnchorOrSubmit(el)) continue;
+
+      // 3. Must be visible, enabled, non-zero size
+      if (!isVisibleEnabledAndNonZero(el)) continue;
+
+      // 4. Strict text allowlist & under 40 characters
       const text = (el.innerText || el.getAttribute('aria-label') || el.title || '').trim();
-      if (!text || text.length > 70) continue;
-
-      if (!ADD_BUTTON_REGEX.test(text)) continue;
+      if (!text || text.length >= 40) continue;
+      if (!STRICT_ADD_BUTTON_REGEX.test(text)) continue;
       if (REMOVE_BUTTON_REGEX.test(text) || SUBMIT_BUTTON_REGEX.test(text)) continue;
+
+      // 5. Must be within 600px of detected field or in same section (if fields exist)
+      if (currentDetectedFieldElements.length > 0 && !isNearDetectedField(el, currentDetectedFieldElements)) {
+        continue;
+      }
 
       // Determine section label from preceding heading/label or button text
       const sectionLabel = findPrecedingSectionLabel(el);
@@ -629,18 +1134,18 @@
 
       seenButtons.add(el);
 
-      // Determine the section container
-      const container =
-        el.closest('fieldset, section, [class*="section"], [class*="group"], [class*="card"], [class*="container"], form, div') ||
+      // Determine the section container inside the form container
+      const sectionContainer =
+        el.closest('fieldset, section, [class*="section"], [class*="group"], [class*="card"], div') ||
         el.parentElement;
 
       // Scan existing inputs in container
       const existingInputs = Array.from(
-        container.querySelectorAll('input:not([type="hidden"]), select, textarea')
+        sectionContainer.querySelectorAll('input:not([type="hidden"]), select, textarea')
       ).filter(inp => isElementVisible(inp));
 
       const existingValues = existingInputs
-        .map(i => i.value ? i.value.trim() : '')
+        .map(i => (i.value ? i.value.trim() : ''))
         .filter(v => v.length > 0 && v !== 'on');
 
       sections.push({
@@ -648,7 +1153,7 @@
         sectionLabel: sectionLabel || text,
         buttonText: text,
         buttonElement: el,
-        containerElement: container,
+        containerElement: sectionContainer,
         existingCount: existingValues.length,
         existingValues,
       });
@@ -736,17 +1241,41 @@
             continue;
           }
 
-          // Step 1: Scroll button into view and dispatch full mouse sequence
+          if (!cachedAutoClickAddButtons) {
+            console.debug('[AutoFill AI] Skipping repeatable button click because Auto-click Add buttons is disabled.');
+            break;
+          }
+
+          if (addMoreClicksCount >= MAX_ADD_MORE_CLICKS) {
+            console.warn('[AutoFill AI] Reached hard limit of 15 add-more clicks.');
+            failures.push({
+              section: sectionLabel,
+              message: `Maximum 15 add-more clicks reached for ${sectionLabel}`,
+            });
+            break;
+          }
+
+          // Step 1: Briefly highlight button and show in panel as "Clicking: <buttonText>"
           const priorElements = new Set(
-            document.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"], [contenteditable="true"]')
+            (containerElement || document).querySelectorAll(
+              'input:not([type="hidden"]), select, textarea, [role="combobox"], [contenteditable="true"]'
+            )
           );
+          buttonElement.classList.add('autofill-highlight-clicking');
+          updateFloatingBadgeProgress(`Clicking: ${buttonText}`);
+          showToast(`AutoFill AI: Clicking ${buttonText}`, 'info');
+          await sleep(250);
 
-          try {
-            buttonElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          } catch (_) {}
+          const clicked = await safeClick(buttonElement, 'repeatable-add-more');
+          buttonElement.classList.remove('autofill-highlight-clicking');
 
-          await sleep(150);
-          dispatchFullClick(buttonElement);
+          if (!clicked || isRunAborted) {
+            failures.push({
+              section: sectionLabel,
+              message: abortReason || `Could not safely click "${buttonText}"`,
+            });
+            break;
+          }
 
           // Step 2: Wait up to 2s (MutationObserver) for new inputs/selects to appear
           const newElements = await waitForNewElements(priorElements, containerElement, 2000);
@@ -766,6 +1295,8 @@
         // Step 3: Build descriptors for just the new fields and fill them
         let filledCount = 0;
         for (const el of fieldsToFill) {
+          if (isRunAborted) break;
+
           const desc = buildFieldDescriptor(el, `repeat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
           desc.element = el;
           desc.elements = [el];
@@ -796,10 +1327,12 @@
           }
         }
 
+        if (isRunAborted) break;
+
         // Step 4: Verify that value stuck and check for inline "Save" / "Done" / "Add" / "Confirm" button
         const confirmBtn = findRowConfirmButton(fieldsToFill, containerElement);
         if (confirmBtn) {
-          dispatchFullClick(confirmBtn);
+          await safeClick(confirmBtn, 'repeatable-row-confirm');
           await sleep(300);
         }
 
@@ -992,14 +1525,23 @@
   function findRowConfirmButton(newElements, containerElement) {
     if (!newElements || newElements.length === 0) return null;
 
+    const isValidConfirmText = (txt) => {
+      if (!txt) return false;
+      const lower = txt.trim().toLowerCase();
+      if (isForbiddenAnchorOrSubmit({ innerText: lower })) return false;
+      return /^(?:save|done|add|confirm|ok|insert)$/i.test(lower);
+    };
+
     // A. Check if inside modal/dialog
     const modal = newElements[0].closest('[role="dialog"], dialog, .modal, [class*="modal"]');
     if (modal) {
-      const modalBtns = Array.from(modal.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]'));
+      const modalBtns = Array.from(modal.querySelectorAll('button, [role="button"]'));
       const confirmBtn = modalBtns.find(b => {
-        const txt = (b.innerText || b.value || b.getAttribute('aria-label') || '').trim().toLowerCase();
-        if (/submit|apply now|send application|cancel|close|delete/i.test(txt)) return false;
-        return /^(?:save|done|add|confirm|ok|insert|apply row|continue)$/i.test(txt) || b.classList.contains('btn-primary');
+        if (!isVisibleEnabledAndNonZero(b)) return false;
+        if (isExcludedNavigationOrHeader(b, 'repeatable-row-confirm')) return false;
+        if (isForbiddenAnchorOrSubmit(b)) return false;
+        const txt = (b.innerText || b.value || b.getAttribute('aria-label') || '').trim();
+        return isValidConfirmText(txt);
       });
       if (confirmBtn) return confirmBtn;
     }
@@ -1009,9 +1551,11 @@
     if (row) {
       const rowBtns = Array.from(row.querySelectorAll('button, [role="button"]'));
       const confirmBtn = rowBtns.find(b => {
-        const txt = (b.innerText || b.getAttribute('aria-label') || '').trim().toLowerCase();
-        if (/submit|apply now|send application|cancel|close|delete|trash|remove/i.test(txt)) return false;
-        return /^(?:save|done|add|confirm|ok|insert|apply row)$/i.test(txt);
+        if (!isVisibleEnabledAndNonZero(b)) return false;
+        if (isExcludedNavigationOrHeader(b, 'repeatable-row-confirm')) return false;
+        if (isForbiddenAnchorOrSubmit(b)) return false;
+        const txt = (b.innerText || b.getAttribute('aria-label') || '').trim();
+        return isValidConfirmText(txt);
       });
       if (confirmBtn) return confirmBtn;
     }
@@ -1021,7 +1565,7 @@
 
   function updateFloatingBadgeProgress(message) {
     if (floatingBadgeEl) {
-      const textEl = floatingBadgeEl.querySelector('.autofill-badge-text');
+      const textEl = floatingBadgeEl.querySelector('.autofill-status-message') || floatingBadgeEl.querySelector('.autofill-badge-text');
       if (textEl) {
         textEl.innerHTML = `<span style="color:#60a5fa;font-weight:600;">⚡ ${escapeHtml(message)}</span>`;
       }
@@ -1469,12 +2013,12 @@
     const isVisible = isElementVisible(targetRadio);
 
     if (isVisible) {
-      dispatchFullClick(targetRadio);
+      await safeClick(targetRadio, 'radio-click');
     } else if (targetLabel) {
       clickMethod = 'radio-label-click';
-      dispatchFullClick(targetLabel);
+      await safeClick(targetLabel, 'radio-click');
     } else {
-      dispatchFullClick(targetRadio);
+      await safeClick(targetRadio, 'radio-click');
     }
 
     if (targetRadio.checked) {
@@ -1487,7 +2031,7 @@
     }
 
     if (targetLabel && clickMethod !== 'radio-label-click') {
-      dispatchFullClick(targetLabel);
+      await safeClick(targetLabel, 'radio-click');
       if (targetRadio.checked) {
         dispatchEvents(targetRadio);
         return {
@@ -1499,7 +2043,7 @@
     }
 
     if (targetRadio.parentElement) {
-      dispatchFullClick(targetRadio.parentElement);
+      await safeClick(targetRadio.parentElement, 'radio-click');
       if (targetRadio.checked) {
         dispatchEvents(targetRadio);
         return {
@@ -1551,11 +2095,11 @@
     const isVisible = isElementVisible(input);
 
     if (isVisible) {
-      dispatchFullClick(input);
+      await safeClick(input, 'checkbox-click');
     } else if (label) {
-      dispatchFullClick(label);
+      await safeClick(label, 'checkbox-click');
     } else {
-      dispatchFullClick(input);
+      await safeClick(input, 'checkbox-click');
     }
 
     if (input.checked === shouldCheck) {
@@ -1568,9 +2112,9 @@
     }
 
     if (label) {
-      dispatchFullClick(label);
+      await safeClick(label, 'checkbox-click');
     } else if (input.parentElement) {
-      dispatchFullClick(input.parentElement);
+      await safeClick(input.parentElement, 'checkbox-click');
     }
 
     if (input.checked === shouldCheck) {
@@ -1634,15 +2178,15 @@
         const isVisible = isElementVisible(cb);
 
         if (isVisible) {
-          dispatchFullClick(cb);
+          await safeClick(cb, 'checkbox-click');
         } else if (label) {
-          dispatchFullClick(label);
+          await safeClick(label, 'checkbox-click');
         } else {
-          dispatchFullClick(cb);
+          await safeClick(cb, 'checkbox-click');
         }
 
         if (cb.checked !== shouldBeChecked && cb.parentElement) {
-          dispatchFullClick(cb.parentElement);
+          await safeClick(cb.parentElement, 'checkbox-click');
         }
 
         if (cb.checked !== shouldBeChecked) {
@@ -1682,7 +2226,10 @@
     try {
       trigger.scrollIntoView({ behavior: 'smooth', block: 'center' });
       await sleep(100);
-      dispatchFullClick(trigger);
+      const triggerClicked = await safeClick(trigger, 'dropdown-trigger');
+      if (!triggerClicked || isRunAborted) {
+        return { success: false, method: 'custom-dropdown-trigger-blocked', error: 'Trigger click blocked by safeClick' };
+      }
 
       const options = await waitForPortalOptions(1500);
 
@@ -1718,7 +2265,11 @@
 
       matched.element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       await sleep(50);
-      dispatchFullClick(matched.element);
+      const optionClicked = await safeClick(matched.element, 'dropdown-option');
+      if (!optionClicked || isRunAborted) {
+        closeDropdownWithEscape(trigger);
+        return { success: false, method: 'custom-dropdown-option-blocked', error: 'Option click blocked by safeClick' };
+      }
       dispatchEvents(trigger);
 
       return {
@@ -1809,22 +2360,9 @@
     } catch (_) {}
   }
 
-  function dispatchFullClick(el) {
-    if (!el) return;
-    try { el.focus(); } catch (_) {}
-    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : { left: 0, top: 0 };
-    const eventInit = {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      clientX: rect.left + 5,
-      clientY: rect.top + 5,
-      button: 0,
-    };
-
-    el.dispatchEvent(new MouseEvent('mousedown', eventInit));
-    el.dispatchEvent(new MouseEvent('mouseup', eventInit));
-    el.dispatchEvent(new MouseEvent('click', eventInit));
+  async function dispatchFullClick(el, reason = 'legacy-full-click') {
+    if (!el) return false;
+    return await safeClick(el, reason);
   }
 
   function isElementVisible(el) {
@@ -2274,7 +2812,7 @@
    * Render Floating Status Badge on Page
    * Shows "Resume attached", repeatable section warnings, or specific failure reasons
    */
-  function renderFloatingBadge(filledCount, totalCount, failedCount = 0, filesAttachedCount = 0, fileUploadStatus = null, repeatableFailures = []) {
+  function renderFloatingBadge(filledCount, totalCount, failedCount = 0, filesAttachedCount = 0, fileUploadStatus = null, repeatableFailures = [], abortNoticeText = null) {
     if (floatingBadgeEl) {
       floatingBadgeEl.remove();
     }
@@ -2300,10 +2838,14 @@
       repeatNotice = ` • <span style="color:#f87171;font-weight:600;">⚠️ ${repeatableFailures.length} section warning</span>`;
     }
 
+    const abortNotice = abortNoticeText
+      ? `<span style="color:#f87171;font-weight:700;">⚠️ ${escapeHtml(abortNoticeText)}</span> • `
+      : '';
+
     badge.innerHTML = `
       <div class="autofill-badge-logo">AI</div>
       <div class="autofill-badge-text">
-        Filled <span class="autofill-badge-count">${filledCount}</span>/${totalCount} fields${fileNotice}${repeatNotice}${failNotice}
+        ${abortNotice}Filled <span class="autofill-badge-count">${filledCount}</span>/${totalCount} fields${fileNotice}${repeatNotice}${failNotice}
       </div>
       <button class="autofill-btn-review" id="autofill-trigger-review">Review</button>
       <button class="autofill-btn-undo" id="autofill-trigger-undo">Undo</button>

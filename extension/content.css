@@ -112,6 +112,27 @@
   background: #1d4ed8;
 }
 
+#autofill-ai-floating-badge .autofill-btn-stop {
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  border: 1px solid #ef4444 !important;
+  font-weight: 700 !important;
+  padding: 5px 12px !important;
+  border-radius: 6px !important;
+  cursor: pointer !important;
+}
+#autofill-ai-floating-badge .autofill-btn-stop:hover {
+  background: #b91c1c !important;
+}
+
+/* Clicking highlight on button */
+.autofill-highlight-clicking {
+  outline: 3px solid #3b82f6 !important;
+  outline-offset: 2px !important;
+  background-color: rgba(59, 130, 246, 0.3) !important;
+  transition: outline 0.15s ease, background-color 0.15s ease !important;
+}
+
 #autofill-ai-floating-badge .autofill-btn-close {
   padding: 3px 6px;
   color: #9ca3af;

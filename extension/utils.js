@@ -15,6 +15,7 @@ export const STORAGE_KEYS = {
   RESUME_FILE: 'autofill_resume_file', // Backward-compatible primary resume { name, type, base64, size }
   STORED_FILES: 'autofill_stored_files', // Array of { id, name, type, size, base64, label, isDefault, updatedAt }
   AUTO_ATTACH_RESUME: 'autofill_auto_attach_resume', // boolean (default true)
+  AUTO_CLICK_ADD_BUTTONS: 'autofill_auto_click_add_buttons', // boolean (default true)
   SETTINGS: 'autofill_settings',
 };
 

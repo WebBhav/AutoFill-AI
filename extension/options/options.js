@@ -102,6 +102,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Resume upload & file manager elements
   const settingAutoAttach = document.getElementById('setting-auto-attach-resume');
+  const settingAutoClickAdd = document.getElementById('setting-auto-click-add');
   const dropZone = document.getElementById('drop-zone');
   const pdfFilePicker = document.getElementById('pdf-file-picker');
   const replaceFilePicker = document.getElementById('replace-file-picker');
@@ -171,6 +172,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     await setStorageData({ [STORAGE_KEYS.AUTO_ATTACH_RESUME]: enabled });
     showToast(enabled ? 'Resume auto-attach enabled!' : 'Resume auto-attach disabled', 'info');
   });
+
+  // Auto-click add buttons toggle handler
+  if (settingAutoClickAdd) {
+    settingAutoClickAdd.addEventListener('change', async () => {
+      const enabled = settingAutoClickAdd.checked;
+      await setStorageData({ [STORAGE_KEYS.AUTO_CLICK_ADD_BUTTONS]: enabled });
+      showToast(enabled ? 'Auto-click "+ Add" buttons enabled!' : 'Auto-click "+ Add" buttons disabled', 'info');
+    });
+  }
 
   // Load existing storage data
   await loadAllStoredData();
@@ -666,6 +676,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       STORAGE_KEYS.RESUME_FILE,
       STORAGE_KEYS.STORED_FILES,
       STORAGE_KEYS.AUTO_ATTACH_RESUME,
+      STORAGE_KEYS.AUTO_CLICK_ADD_BUTTONS,
       STORAGE_KEYS.LEARNED_ANSWERS,
     ]);
 
@@ -694,6 +705,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Auto attach setting (default true)
     settingAutoAttach.checked = data[STORAGE_KEYS.AUTO_ATTACH_RESUME] !== false;
+
+    // Auto click add buttons setting (default true)
+    if (settingAutoClickAdd) {
+      settingAutoClickAdd.checked = data[STORAGE_KEYS.AUTO_CLICK_ADD_BUTTONS] !== false;
+    }
 
     // Stored documents
     let storedDocs = data[STORAGE_KEYS.STORED_FILES] || [];
